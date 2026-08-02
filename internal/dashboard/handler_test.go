@@ -97,3 +97,43 @@ func TestBackendToggle(t *testing.T) {
 		t.Fatalf("expected disabled status in body, got %q", resp.Body.String())
 	}
 }
+
+func TestGenerateKeyWorkflow(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models:   config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}}}},
+		Users:    map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	loginForm := url.Values{}
+	loginForm.Set("token", "super-secret")
+	loginReq := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(loginForm.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginResp := httptest.NewRecorder()
+	handler.ServeHTTP(loginResp, loginReq)
+	cookie := loginResp.Result().Cookies()[0]
+
+	form := url.Values{}
+	form.Set("action", "generate")
+	req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected generated key page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Generated API Key") {
+		t.Fatalf("expected generated key UI, got %q", body)
+	}
+	if !strings.Contains(body, "sha256") {
+		t.Fatalf("expected hash output in response, got %q", body)
+	}
+}

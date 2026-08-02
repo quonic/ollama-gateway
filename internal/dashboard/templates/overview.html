@@ -13,6 +13,26 @@
     <p class="metric">{{ .UserCount }}</p>
   </div>
 </div>
+{{ if .Summary }}
+<div class="cards">
+  <div class="card">
+    <h3>Requests (all time)</h3>
+    <p class="metric">{{ index .Summary "requests" }}</p>
+  </div>
+  <div class="card">
+    <h3>Prompt Tokens</h3>
+    <p class="metric">{{ index .Summary "promptTokens" }}</p>
+  </div>
+  <div class="card">
+    <h3>Completion Tokens</h3>
+    <p class="metric">{{ index .Summary "completionTokens" }}</p>
+  </div>
+  <div class="card">
+    <h3>Estimated Cost</h3>
+    <p class="metric">{{ formatCost (index .Summary "cost") }}</p>
+  </div>
+</div>
+{{ end }}
 <div class="card">
   <h3>Backend Status</h3>
   <ul class="stack-list">

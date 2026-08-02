@@ -71,6 +71,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleLogin(w, r)
 		return
 	}
+	if r.Method == http.MethodPost && path == "users" {
+		h.handleUserAction(w, r)
+		return
+	}
 	if path == "login" {
 		h.renderLogin(w, r, false)
 		return
@@ -154,6 +158,12 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 		"Backends":         h.cfg.Backends,
 		"DisabledBackends": h.state.disabledBackends,
 	}
+	if h.usageStore != nil {
+		summary, err := h.loadOverviewSummary()
+		if err == nil {
+			data["Summary"] = summary
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "overview.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -193,6 +203,8 @@ func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request) {
 		"Active":           "users",
 		"Users":            h.cfg.Users,
 		"DisabledBackends": h.state.disabledBackends,
+		"GeneratedKey":     "",
+		"GeneratedHash":    "",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "users.html", data); err != nil {
@@ -244,6 +256,32 @@ func (h *Handler) handleBackendToggle(w http.ResponseWriter, path string) {
 	fmt.Fprintf(w, "Backend %q disabled", name)
 }
 
+func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.httpError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+	if r.FormValue("action") != "generate" {
+		h.renderUsers(w, r)
+		return
+	}
+
+	rawKey := generateAPIKey()
+	hash := auth.HashAPIKey(rawKey)
+	data := map[string]any{
+		"Title":            "Users",
+		"Active":           "users",
+		"Users":            h.cfg.Users,
+		"DisabledBackends": h.state.disabledBackends,
+		"GeneratedKey":     rawKey,
+		"GeneratedHash":    hash,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "users.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func (h *Handler) serveStatic(w http.ResponseWriter, path string) {
 	data, err := dashboardFS.ReadFile("static/" + strings.TrimPrefix(path, "static/"))
 	if err != nil {
@@ -282,6 +320,37 @@ func (h *Handler) loadRecentRecords(limit int) ([]usage.UsageRecord, error) {
 		return nil, err
 	}
 	return records, nil
+}
+
+func (h *Handler) loadOverviewSummary() (map[string]any, error) {
+	if h.usageStore == nil {
+		return nil, fmt.Errorf("usage store not configured")
+	}
+	type summaryRow struct {
+		Requests         int
+		PromptTokens     int64
+		CompletionTokens int64
+		Cost             float64
+	}
+	var row summaryRow
+	if err := h.usageStore.DB().QueryRow(`SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0) FROM usage_records`).Scan(&row.Requests, &row.PromptTokens, &row.CompletionTokens, &row.Cost); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"requests":         row.Requests,
+		"promptTokens":     row.PromptTokens,
+		"completionTokens": row.CompletionTokens,
+		"cost":             row.Cost,
+	}, nil
+}
+
+func generateAPIKey() string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = alphabet[i%len(alphabet)]
+	}
+	return string(b)
 }
 
 func formatCost(v any) string {

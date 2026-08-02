@@ -1,5 +1,23 @@
 {{ define "content" }}
 <div class="card">
+  <h3>Generate New API Key</h3>
+  <form method="post" action="/admin/users">
+    <input type="hidden" name="action" value="generate" />
+    <button type="submit">Generate New Key Hash</button>
+  </form>
+  {{ if .GeneratedKey }}
+  <div class="generated-key">
+    <h4>Generated API Key</h4>
+    <p><strong>Raw key:</strong> {{ .GeneratedKey }}</p>
+    <p><strong>sha256 hash:</strong> {{ .GeneratedHash }}</p>
+    <p class="hint">
+      Copy the raw key now — it will not be shown again. Paste the hash into
+      config.yaml under a new API key entry.
+    </p>
+  </div>
+  {{ end }}
+</div>
+<div class="card">
   <h3>Configured API Keys</h3>
   <ul class="stack-list">
     {{ range $id, $user := .Users }}
