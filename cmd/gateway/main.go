@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
 )
 
@@ -26,6 +27,14 @@ func main() {
 
 	logger.Info("configuration loaded", "listen_addr", cfg.Server.ListenAddr, "backends", len(cfg.Backends))
 
-	// TODO: wire up auth, ratelimit, models/backends, proxy, usage, dashboard.
-	_ = cfg // placeholder until subsequent phases
+	// Phase 2: Auth layer setup
+	authStore := auth.NewStore(cfg)
+	if err := authStore.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "auth config error: %v\n", err)
+		os.Exit(1)
+	}
+	logger.Info("auth store initialized", "users", len(cfg.Users))
+
+	// TODO: wire up ratelimit, models/backends, proxy, usage, dashboard.
+	_ = authStore // placeholder until subsequent phases
 }

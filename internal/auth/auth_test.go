@@ -1,0 +1,238 @@
+package auth
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"ollama-gateway/internal/config"
+)
+
+func testConfig() *config.Config {
+	return &config.Config{
+		Users: map[string]config.UserConfig{
+			"user-alice": {APIKeyHash: HashAPIKey("alice-secret-key")},
+			"user-bob":   {APIKeyHash: HashAPIKey("bob-secret-key")},
+		},
+		Admin: config.AdminConfig{TokenHash: HashAPIKey("admin-token-123")},
+	}
+}
+
+func TestHashAPIKey(t *testing.T) {
+	hash1 := HashAPIKey("test-key")
+	hash2 := HashAPIKey("test-key")
+	if hash1 != hash2 {
+		t.Error("hashing same key should produce identical hashes")
+	}
+	if len(hash1) != 64 { // SHA-256 hex = 64 chars
+		t.Errorf("expected 64-char hex digest, got %d", len(hash1))
+	}
+}
+
+func TestVerifyAPIKeyHash_Valid(t *testing.T) {
+	hash := HashAPIKey("my-secret-key")
+	if !VerifyAPIKeyHash(hash, "my-secret-key") {
+		t.Error("valid key should verify successfully")
+	}
+}
+
+func TestVerifyAPIKeyHash_Invalid(t *testing.T) {
+	hash := HashAPIKey("correct-key")
+	if VerifyAPIKeyHash(hash, "wrong-key") {
+		t.Error("invalid key should not verify")
+	}
+}
+
+func TestVerifyAPIKeyHash_EmptyExpected(t *testing.T) {
+	if VerifyAPIKeyHash("", "any-key") {
+		t.Error("empty expected hash should always fail")
+	}
+}
+
+func TestStoreLookupAPIKey_Found(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	key, ok := s.LookupAPIKey("alice-secret-key")
+	if !ok {
+		t.Fatal("expected key lookup to succeed for valid key")
+	}
+	if key.ID != "user-alice" {
+		t.Errorf("expected user ID 'user-alice', got %q", key.ID)
+	}
+}
+
+func TestStoreLookupAPIKey_NotFound(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	key, ok := s.LookupAPIKey("nonexistent-key")
+	if ok || key != nil {
+		t.Error("expected lookup to fail for invalid key")
+	}
+}
+
+func TestStoreCheckAdminToken_Valid(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	if !s.CheckAdminToken("admin-token-123") {
+		t.Error("valid admin token should verify")
+	}
+}
+
+func TestStoreCheckAdminToken_Invalid(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	if s.CheckAdminToken("wrong-admin-token") {
+		t.Error("invalid admin token should not verify")
+	}
+}
+
+func TestStoreValidate_NoUsers(t *testing.T) {
+	cfg := &config.Config{
+		Users: map[string]config.UserConfig{},
+	}
+	s := NewStore(cfg)
+	if err := s.Validate(); err == nil {
+		t.Error("expected error when no users configured")
+	}
+}
+
+func TestMiddleware_MissingAPIKey(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach downstream handler without API key")
+	}))
+
+	req := httptest.NewRequest("POST", "/api/generate", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for missing API key, got %d", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "missing API key" {
+		t.Errorf("unexpected error message: %q", body["error"])
+	}
+}
+
+func TestMiddleware_InvalidAPIKey(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach downstream handler with invalid API key")
+	}))
+
+	req := httptest.NewRequest("POST", "/api/generate", nil)
+	req.Header.Set("X-API-Key", "wrong-key-value")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for invalid API key, got %d", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "invalid API key" {
+		t.Errorf("unexpected error message: %q", body["error"])
+	}
+}
+
+func TestMiddleware_ValidAPIKey(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+
+	var capturedAuth *AuthContext
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ok := FromContext(r.Context())
+		if !ok {
+			t.Error("expected AuthContext in request context")
+			return
+		}
+		capturedAuth = ac
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/api/generate", nil)
+	req.Header.Set("X-API-Key", "alice-secret-key")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for valid API key, got %d", w.Code)
+	}
+	if capturedAuth == nil {
+		t.Fatal("expected AuthContext to be captured")
+	}
+	if capturedAuth.KeyID != "user-alice" {
+		t.Errorf("expected KeyID 'user-alice', got %q", capturedAuth.KeyID)
+	}
+}
+
+func TestAdminMiddleware_MissingToken(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach downstream handler without admin token")
+	}))
+
+	req := httptest.NewRequest("GET", "/admin/overview", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for missing admin token, got %d", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "missing admin token" {
+		t.Errorf("unexpected error message: %q", body["error"])
+	}
+}
+
+func TestAdminMiddleware_InvalidToken(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach downstream handler with invalid admin token")
+	}))
+
+	req := httptest.NewRequest("GET", "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "wrong-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for invalid admin token, got %d", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "invalid admin token" {
+		t.Errorf("unexpected error message: %q", body["error"])
+	}
+}
+
+func TestAdminMiddleware_ValidToken(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg)
+
+	handlerCalled := false
+	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "admin-token-123")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for valid admin token, got %d", w.Code)
+	}
+	if !handlerCalled {
+		t.Error("downstream handler should have been called")
+	}
+}
