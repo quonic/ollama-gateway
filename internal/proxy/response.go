@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 )
 
 // UsageStats holds token counts extracted from an Ollama response for usage tracking.
@@ -111,6 +112,8 @@ func extractNonStreamingUsage(body []byte) UsageStats {
 }
 
 // writeJSONError writes a JSON error response in Ollama's format: {"error": "message"}.
-func writeJSONError(w io.Writer, statusCode int, message string) {
-	w.Write([]byte(`{"error":"` + message + `"}`))
+func writeJSONError(w http.ResponseWriter, statusCode int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_, _ = w.Write([]byte(`{"error":"` + message + `"}`))
 }

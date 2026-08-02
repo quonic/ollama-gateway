@@ -191,11 +191,26 @@ func TestGetClientIP_RemoteAddrFallback(t *testing.T) {
 // --- writeJSONError tests ---
 
 func TestWriteJSONError(t *testing.T) {
-	var buf bytes.Buffer
-	writeJSONError(&buf, http.StatusForbidden, "access denied")
-	output := buf.String()
+	rec := httptest.NewRecorder()
+	writeJSONError(rec, http.StatusForbidden, "access denied")
+	output := rec.Body.String()
 	if !strings.Contains(output, `"error":"access denied"`) {
 		t.Errorf("expected error message in JSON output, got %q", output)
+	}
+}
+
+func TestWriteJSONError_SetsHTTPResponseMetadata(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeJSONError(rec, http.StatusForbidden, "access denied")
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected Content-Type application/json, got %q", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"error":"access denied"`) {
+		t.Fatalf("expected error payload in body, got %q", rec.Body.String())
 	}
 }
 
