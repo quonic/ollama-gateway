@@ -10,6 +10,11 @@ admin:
   # SHA-256 hex of your admin token (e.g., echo -n "my-admin-token" | sha256sum)
   token_hash: ""
 
+rate_limiting:
+  default_rate: 10.0 # tokens/sec refill rate for keys without per-key override
+  default_burst: 50 # max burst capacity (tokens) for keys without override
+  ttl: 1h # idle TTL before bucket cleanup
+
 backends:
   - name: "local-gpu"
     url: "http://127.0.0.1:11434"

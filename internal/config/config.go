@@ -10,13 +10,14 @@ import (
 
 // Config is the top-level gateway configuration.
 type Config struct {
-	Server   ServerConfig          `yaml:"server"`
-	Admin    AdminConfig           `yaml:"admin"`
-	Backends []Backend             `yaml:"backends"`
-	Models   ModelCatalog          `yaml:"models"`
-	Users    map[string]UserConfig `yaml:"users"`
-	Pricing  PricingConfig         `yaml:"pricing"`
-	Database DatabaseConfig        `yaml:"database"`
+	Server    ServerConfig          `yaml:"server"`
+	Admin     AdminConfig           `yaml:"admin"`
+	RateLimit RateLimitingConfig    `yaml:"rate_limiting,omitempty"`
+	Backends  []Backend             `yaml:"backends"`
+	Models    ModelCatalog          `yaml:"models"`
+	Users     map[string]UserConfig `yaml:"users"`
+	Pricing   PricingConfig         `yaml:"pricing"`
+	Database  DatabaseConfig        `yaml:"database"`
 }
 
 // ServerConfig controls the HTTP server.
@@ -30,6 +31,14 @@ type ServerConfig struct {
 // AdminConfig holds the admin token hash for /admin/* routes.
 type AdminConfig struct {
 	TokenHash string `yaml:"token_hash"`
+}
+
+// RateLimitingConfig defines global defaults applied to API keys that do not
+// specify their own per-key rate_limit override in Users config.
+type RateLimitingConfig struct {
+	DefaultRate  float64       `yaml:"default_rate"`  // tokens/sec refill (e.g. 10.0)
+	DefaultBurst int           `yaml:"default_burst"` // max burst capacity (e.g. 50)
+	TTL          time.Duration `yaml:"ttl,omitempty"` // bucket idle TTL before cleanup (default 1h)
 }
 
 // Backend represents a single Ollama backend server.
@@ -100,6 +109,9 @@ const (
 	defaultIdleTimeout   = 120 * time.Second
 	defaultBackendWeight = 1
 	defaultBucketTTL     = 1 * time.Hour
+	// Global rate limit defaults (applied when not specified in config).
+	defaultRateLimitRate  float64 = 10.0 // tokens/sec refill
+	defaultRateLimitBurst int     = 50   // max burst capacity
 )
 
 // Load reads the config from path, applies defaults and validates.
@@ -150,9 +162,21 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 	}
-	for _, u := range cfg.Users {
+	// Global rate limit defaults
+	if cfg.RateLimit.DefaultRate <= 0 {
+		cfg.RateLimit.DefaultRate = defaultRateLimitRate
+	}
+	if cfg.RateLimit.DefaultBurst <= 0 {
+		cfg.RateLimit.DefaultBurst = defaultRateLimitBurst
+	}
+	if cfg.RateLimit.TTL == 0 {
+		cfg.RateLimit.TTL = defaultBucketTTL
+	}
+	for userID, u := range cfg.Users {
+		// Apply global TTL to per-key buckets that don't specify one.
 		if u.RateLimit != nil && u.RateLimit.TTL == 0 {
-			u.RateLimit.TTL = defaultBucketTTL
+			u.RateLimit.TTL = cfg.RateLimit.TTL
+			cfg.Users[userID] = u // write back since map iteration is by value
 		}
 	}
 }

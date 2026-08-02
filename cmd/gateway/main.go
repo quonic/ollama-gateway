@@ -8,6 +8,7 @@ import (
 
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
+	"ollama-gateway/internal/ratelimit"
 )
 
 func main() {
@@ -35,6 +36,15 @@ func main() {
 	}
 	logger.Info("auth store initialized", "users", len(cfg.Users))
 
-	// TODO: wire up ratelimit, models/backends, proxy, usage, dashboard.
-	_ = authStore // placeholder until subsequent phases
+	// Phase 3: Rate limiting setup
+	limiterStore := ratelimit.NewLimiterStore(cfg)
+	rateLimitMw := ratelimit.NewMiddleware(limiterStore)
+	logger.Info("rate limiter initialized",
+		"default_rate", cfg.RateLimit.DefaultRate,
+		"default_burst", cfg.RateLimit.DefaultBurst,
+		"ttl", cfg.RateLimit.TTL)
+
+	// TODO: wire up models/backends, proxy, usage, dashboard.
+	_ = authStore   // placeholder until subsequent phases
+	_ = rateLimitMw // placeholder — applied in server/routes.go (Phase 5+)
 }
