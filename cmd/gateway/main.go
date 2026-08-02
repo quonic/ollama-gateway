@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/models"
+	"ollama-gateway/internal/proxy"
 	"ollama-gateway/internal/ratelimit"
 )
 
@@ -56,6 +58,9 @@ func main() {
 		"models", len(resolver.Registry().AllModels()),
 		"backends", len(resolver.Manager().Backends()))
 
+	// Phase 5: Reverse proxy handler setup.
+	proxyHandler := proxy.NewProxyHandler(resolver)
+
 	// Start health checker in background.
 	ctx := context.Background()
 	go func() {
@@ -65,7 +70,24 @@ func main() {
 		"interval_seconds", cfg.HealthCheck.IntervalSeconds,
 		"timeout_seconds", cfg.HealthCheck.TimeoutSeconds)
 
-	// TODO: wire up proxy (Phase 5), usage tracking (Phase 6), dashboard (Phase 7).
-	_ = authStore   // placeholder until subsequent phases
-	_ = rateLimitMw // placeholder — applied in server/routes.go (Phase 5+)
+	// Build the HTTP server with auth + rate limit middleware applied to /api/* routes.
+	mux := http.NewServeMux()
+	apiRouter := http.NewServeMux()
+	apiRouter.Handle("/", proxyHandler)
+
+	mux.Handle("/api/", authStore.Middleware(rateLimitMw.Handler(apiRouter)))
+
+	srv := &http.Server{
+		Addr:         cfg.Server.ListenAddr,
+		Handler:      mux,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
+	}
+
+	logger.Info("server starting", "listen_addr", cfg.Server.ListenAddr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+		os.Exit(1)
+	}
 }

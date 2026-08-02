@@ -87,3 +87,20 @@ func (m *Manager) PoolForModel(refs []config.ModelBackendRef) (*BackendPool, err
 func (m *Manager) HealthChecker() *HealthChecker {
 	return m.checker
 }
+
+// DefaultPool builds a BackendPool containing all managed backends with their configured weights.
+// Used when no specific model is requested (e.g. GET /api/tags, GET /api/ps, GET /api/version).
+func (m *Manager) DefaultPool() (*BackendPool, error) {
+	entries := make([]ModelBackendWeight, 0, len(m.backends))
+	for _, b := range m.backends {
+		w := b.Weight
+		if w <= 0 {
+			w = DefaultModelWeight
+		}
+		entries = append(entries, ModelBackendWeight{
+			Backend: b,
+			Weight:  w,
+		})
+	}
+	return NewBackendPool(entries), nil
+}
