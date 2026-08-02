@@ -1,0 +1,52 @@
+# Ollama Gateway — Example Configuration
+
+server:
+  listen_addr: "0.0.0.0:4080"
+  read_timeout: 30s
+  write_timeout: 120s
+  idle_timeout: 120s
+
+admin:
+  # SHA-256 hex of your admin token (e.g., echo -n "my-admin-token" | sha256sum)
+  token_hash: ""
+
+backends:
+  - name: "local-gpu"
+    url: "http://127.0.0.1:11434"
+    weight: 10
+    timeout: 120s
+    headers:
+      # Optional extra headers sent to this backend on every request
+      X-Backend-Tag: "local-gpu"
+
+models:
+  models:
+    llama3:
+      name: "llama3"
+      backends:
+        - backend: local-gpu
+          weight: 10
+    qwen2.5:
+      name: "qwen2.5"
+      backends:
+        - backend: local-gpu
+          weight: 5
+
+users:
+  # Map of user identifier (e.g., API key label) to config.
+  # api_key_hash is the SHA-256 hex digest of the plaintext API key.
+  "user-alice":
+    api_key_hash: "" # echo -n "alice-secret-key" | sha256sum
+    rate_limit:
+      rate: 10.0 # tokens/sec refill
+      burst: 50 # max burst capacity
+      ttl: 1h # bucket cleanup TTL when idle
+
+pricing:
+  models:
+    llama3:
+      prompt_per_1m: 0.00 # USD per 1M prompt tokens
+      eval_per_1m: 0.00 # USD per 1M output tokens
+
+database:
+  path: "data/gateway.db"
