@@ -1,0 +1,25 @@
+{{ define "login.html" }}<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Login</title>
+    <link rel="stylesheet" href="/admin/static/style.css" />
+  </head>
+  <body>
+    <div class="login-card">
+      <h1>Admin Login</h1>
+      <p>Enter the configured admin token to access the dashboard.</p>
+      <form method="post" action="/admin/login">
+        <input
+          type="password"
+          name="token"
+          placeholder="Admin token"
+          required
+        />
+        <button type="submit">Access Dashboard</button>
+      </form>
+    </div>
+  </body>
+</html>
+{{ end }}

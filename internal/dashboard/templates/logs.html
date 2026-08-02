@@ -1,0 +1,29 @@
+{{ define "content" }}
+<div class="card">
+  <h3>Recent Usage Records</h3>
+  {{ if .Records }}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>API Key</th>
+        <th>Model</th>
+        <th>Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Records }}
+      <tr>
+        <td>{{ .Timestamp }}</td>
+        <td>{{ .APIKeyID }}</td>
+        <td>{{ .Model }}</td>
+        <td>{{ formatCost .CostUSD }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ else }}
+  <p>No usage records available yet.</p>
+  {{ end }}
+</div>
+{{ end }} {{ define "logs.html" }}{{ template "layout.html" . }}{{ end }}

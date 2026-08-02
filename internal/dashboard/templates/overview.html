@@ -1,0 +1,32 @@
+{{ define "content" }}
+<div class="cards">
+  <div class="card">
+    <h3>Configured Backends</h3>
+    <p class="metric">{{ .BackendCount }}</p>
+  </div>
+  <div class="card">
+    <h3>Configured Models</h3>
+    <p class="metric">{{ .ModelCount }}</p>
+  </div>
+  <div class="card">
+    <h3>Registered Users</h3>
+    <p class="metric">{{ .UserCount }}</p>
+  </div>
+</div>
+<div class="card">
+  <h3>Backend Status</h3>
+  <ul class="stack-list">
+    {{ range .Backends }}
+    <li>
+      <strong>{{ .Name }}</strong>
+      <span
+        class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
+      >
+        {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end
+        }}
+      </span>
+    </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }} {{ define "overview.html" }}{{ template "layout.html" . }}{{ end }}

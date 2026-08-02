@@ -1,0 +1,17 @@
+{{ define "content" }}
+<div class="card">
+  <h3>Model Catalog</h3>
+  <p>
+    Runtime edits made here are kept in memory for the current process and are
+    not persisted to disk.
+  </p>
+  <ul class="stack-list">
+    {{ range $name, $entry := .Models }}
+    <li>
+      <strong>{{ $name }}</strong> → {{ range $entry.Backends }}{{ .Backend }}
+      {{ end }}
+    </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }} {{ define "models.html" }}{{ template "layout.html" . }}{{ end }}

@@ -1,0 +1,20 @@
+{{ define "content" }}
+<div class="card">
+  <h3>Backend Controls</h3>
+  <ul class="stack-list">
+    {{ range .Backends }}
+    <li>
+      <strong>{{ .Name }}</strong>
+      <span
+        class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
+        >{{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end
+        }}</span
+      >
+      <a class="inline-action" href="/admin/backends/toggle/{{ .Name }}"
+        >toggle</a
+      >
+    </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }} {{ define "backends.html" }}{{ template "layout.html" . }}{{ end }}

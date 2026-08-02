@@ -1,0 +1,13 @@
+{{ define "content" }}
+<div class="card">
+  <h3>Configured API Keys</h3>
+  <ul class="stack-list">
+    {{ range $id, $user := .Users }}
+    <li>
+      <strong>{{ $id }}</strong> — {{ if ne $user.APIKeyHash "" }}hash
+      configured{{ else }}no hash{{ end }}
+    </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }} {{ define "users.html" }}{{ template "layout.html" . }}{{ end }}

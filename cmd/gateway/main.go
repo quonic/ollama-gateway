@@ -13,6 +13,7 @@ import (
 
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
+	"ollama-gateway/internal/dashboard"
 	"ollama-gateway/internal/models"
 	"ollama-gateway/internal/proxy"
 	"ollama-gateway/internal/ratelimit"
@@ -65,9 +66,12 @@ func main() {
 		"backends", len(resolver.Manager().Backends()))
 
 	// Phase 6: Usage tracking setup
-	var usageLogger *usage.UsageLogger
+	var (
+		usageLogger *usage.UsageLogger
+		dbStore     *usage.Store
+	)
 	if cfg.Database.Path != "" {
-		dbStore, err := usage.NewStore(cfg.Database.Path)
+		dbStore, err = usage.NewStore(cfg.Database.Path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "database error: %v\n", err)
 			os.Exit(1)
@@ -109,7 +113,14 @@ func main() {
 	apiRouter := http.NewServeMux()
 	apiRouter.Handle("/", proxyHandler)
 
+	dashboardHandler, err := dashboard.NewHandler(cfg, authStore, dbStore, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "dashboard init error: %v\n", err)
+		os.Exit(1)
+	}
+
 	mux.Handle("/api/", authStore.Middleware(rateLimitMw.Handler(apiRouter)))
+	mux.Handle("/admin/", dashboardHandler)
 
 	srv := &http.Server{
 		Addr:         cfg.Server.ListenAddr,

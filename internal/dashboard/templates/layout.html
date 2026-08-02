@@ -1,0 +1,32 @@
+{{ define "layout.html" }}<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ .Title }} - Ollama Gateway</title>
+    <link rel="stylesheet" href="/admin/static/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <h1>Ollama Gateway</h1>
+        <nav>
+          <a class="nav-link {{ if eq .Active "overview" }}active{{ end }}" href="/admin/overview">Overview</a>
+          <a class="nav-link {{ if eq .Active "models" }}active{{ end }}" href="/admin/models">Models</a>
+          <a class="nav-link {{ if eq .Active "backends" }}active{{ end }}" href="/admin/backends">Backends</a>
+          <a class="nav-link {{ if eq .Active "users" }}active{{ end }}" href="/admin/users">Users</a>
+          <a class="nav-link {{ if eq .Active "logs" }}active{{ end }}" href="/admin/logs">Logs</a>
+        </nav>
+      </aside>
+      <main class="content">
+        <header class="topbar">
+          <h2>{{ .Title }}</h2>
+          <a href="/admin/login" class="ghost-link">Logout</a>
+        </header>
+        {{ template "content" . }}
+      </main>
+    </div>
+  </body>
+</html>
+{{ end }}
