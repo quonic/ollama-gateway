@@ -95,15 +95,17 @@ type RateLimitCfg struct {
 	TTL   time.Duration `yaml:"ttl"`   // bucket idle TTL before cleanup (default 1h)
 }
 
-// PricingConfig defines cost per 1M tokens for prompt/eval.
+// PricingConfig defines cost per 1M tokens for prompt and output, with global defaults.
 type PricingConfig struct {
-	Models map[string]ModelPricing `yaml:"models"`
+	DefaultInputPer1M  float64                 `yaml:"default_input_per_1m_tokens"` // applies to any unpriced model
+	DefaultOutputPer1M float64                 `yaml:"default_output_per_1m_tokens"`
+	Models             map[string]ModelPricing `yaml:"models"`
 }
 
 // ModelPricing holds per-model pricing in USD per 1M tokens.
 type ModelPricing struct {
-	PromptPer1M float64 `yaml:"prompt_per_1m"` // cost per 1M prompt tokens
-	EvalPer1M   float64 `yaml:"eval_per_1m"`   // cost per 1M eval (output) tokens
+	InputCostPer1M  float64 `yaml:"input_cost_per_1m_tokens"`  // cost per 1M prompt (input) tokens
+	OutputCostPer1M float64 `yaml:"output_cost_per_1m_tokens"` // cost per 1M eval (output) tokens
 }
 
 // DatabaseConfig configures the SQLite database.

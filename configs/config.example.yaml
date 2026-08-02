@@ -54,10 +54,20 @@ users:
       ttl: 1h # bucket cleanup TTL when idle
 
 pricing:
+  # Global defaults applied to any model without an explicit pricing entry.
+  default_input_per_1m_tokens: 0.0 # USD per 1M input tokens; applies to any unpriced model
+  default_output_per_1m_tokens: 0.0 # USD per 1M output tokens
+
   models:
     llama3:
-      prompt_per_1m: 0.00 # USD per 1M prompt tokens
-      eval_per_1m: 0.00 # USD per 1M output tokens
+      input_cost_per_1m_tokens: 0.00 # USD per 1M prompt (input) tokens
+      output_cost_per_1m_tokens: 0.00 # USD per 1M eval (output) tokens
+    qwen2.5:
+      input_cost_per_1m_tokens: 0.00
+      output_cost_per_1m_tokens: 0.00
+
+database:
+  path: ".data/gateway.db" # SQLite database file for usage tracking
 
 database:
   path: "data/gateway.db"

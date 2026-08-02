@@ -199,23 +199,28 @@ func TestWriteJSONError(t *testing.T) {
 	}
 }
 
-// --- UsageStatsFromContext tests ---
+// --- StreamingResponseInterceptor tests ---
 
-func TestUsageStatsFromContext(t *testing.T) {
-	ctx := withUsageStats(context.Background(), UsageStats{PromptTokens: 5, EvalTokens: 3})
-	stats, ok := UsageStatsFromContext(ctx)
-	if !ok {
-		t.Fatal("expected to retrieve usage stats from context")
-	}
-	if stats.PromptTokens != 5 || stats.EvalTokens != 3 {
-		t.Errorf("unexpected stats: prompt=%d eval=%d", stats.PromptTokens, stats.EvalTokens)
+func TestStreamingInterceptor_SetAndGetStats(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sri := newStreamingResponseInterceptor(rec)
+	sri.setStats(UsageStats{PromptTokens: 10, EvalTokens: 20})
+	stats := sri.stats()
+	if stats.PromptTokens != 10 || stats.EvalTokens != 20 {
+		t.Errorf("unexpected stats after setStats: prompt=%d eval=%d", stats.PromptTokens, stats.EvalTokens)
 	}
 }
 
-func TestUsageStatsFromContext_NoValue(t *testing.T) {
-	stats, ok := UsageStatsFromContext(context.Background())
-	if ok {
-		t.Fatalf("expected false for empty context, got stats: %+v", stats)
+func TestStreamingInterceptor_ContextRoundTrip(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sri := newStreamingResponseInterceptor(rec)
+	ctx := withStreamingInterceptor(context.Background(), sri)
+	retrieved, ok := streamingInterceptorFromContext(ctx)
+	if !ok {
+		t.Fatal("expected to retrieve interceptor from context")
+	}
+	if retrieved != sri {
+		t.Error("retrieved interceptor does not match original pointer")
 	}
 }
 

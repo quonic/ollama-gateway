@@ -7,12 +7,18 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/models"
 	"ollama-gateway/internal/proxy"
 	"ollama-gateway/internal/ratelimit"
+	"ollama-gateway/internal/usage"
+
+	_ "github.com/mattn/go-sqlite3" // SQLite driver for usage tracking database
 )
 
 func main() {
@@ -58,8 +64,36 @@ func main() {
 		"models", len(resolver.Registry().AllModels()),
 		"backends", len(resolver.Manager().Backends()))
 
+	// Phase 6: Usage tracking setup
+	var usageLogger *usage.UsageLogger
+	if cfg.Database.Path != "" {
+		dbStore, err := usage.NewStore(cfg.Database.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "database error: %v\n", err)
+			os.Exit(1)
+		}
+		defer dbStore.Close()
+
+		pricingCfg := &usage.PricingConfig{
+			DefaultInputPer1M:  cfg.Pricing.DefaultInputPer1M,
+			DefaultOutputPer1M: cfg.Pricing.DefaultOutputPer1M,
+			ModelPricing:       make(map[string]usage.ModelPricing),
+		}
+		for modelName, mp := range cfg.Pricing.Models {
+			pricingCfg.ModelPricing[modelName] = usage.ModelPricing{
+				InputCostPer1M:  mp.InputCostPer1M,
+				OutputCostPer1M: mp.OutputCostPer1M,
+			}
+		}
+
+		usageLogger = usage.NewUsageLogger(dbStore, usage.DefaultLoggerOptions())
+		logger.Info("usage logger initialized", "database", cfg.Database.Path)
+	} else {
+		logger.Warn("no database path configured; usage tracking disabled")
+	}
+
 	// Phase 5: Reverse proxy handler setup.
-	proxyHandler := proxy.NewProxyHandler(resolver)
+	proxyHandler := proxy.NewProxyHandler(resolver, usageLogger)
 
 	// Start health checker in background.
 	ctx := context.Background()
@@ -86,6 +120,40 @@ func main() {
 	}
 
 	logger.Info("server starting", "listen_addr", cfg.Server.ListenAddr)
+
+	// Set up graceful shutdown: on SIGTERM/SIGINT, stop accepting connections,
+	// wait for active requests to complete (30s), then flush usage logger.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		sig := <-sigCh
+		logger.Info("received signal; initiating graceful shutdown", "signal", sig.String())
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("graceful server shutdown failed", "error", err)
+		}
+
+		if usageLogger != nil {
+			done := make(chan struct{})
+			go func() {
+				usageLogger.Shutdown(done) // wait for it to be ready
+				close(done)
+			}()
+			select {
+			case <-done:
+				logger.Info("usage logger flushed and stopped")
+			case <-shutdownCtx.Done():
+				logger.Warn("usage logger shutdown timed out; some records may be lost", "error", shutdownCtx.Err())
+			}
+		}
+
+		os.Exit(0)
+	}()
+
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
