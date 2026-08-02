@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -10,14 +12,15 @@ import (
 
 // Config is the top-level gateway configuration.
 type Config struct {
-	Server    ServerConfig          `yaml:"server"`
-	Admin     AdminConfig           `yaml:"admin"`
-	RateLimit RateLimitingConfig    `yaml:"rate_limiting,omitempty"`
-	Backends  []Backend             `yaml:"backends"`
-	Models    ModelCatalog          `yaml:"models"`
-	Users     map[string]UserConfig `yaml:"users"`
-	Pricing   PricingConfig         `yaml:"pricing"`
-	Database  DatabaseConfig        `yaml:"database"`
+	Server      ServerConfig          `yaml:"server"`
+	Admin       AdminConfig           `yaml:"admin"`
+	RateLimit   RateLimitingConfig    `yaml:"rate_limiting,omitempty"`
+	Backends    []Backend             `yaml:"backends"`
+	Models      ModelCatalog          `yaml:"models"`
+	Users       map[string]UserConfig `yaml:"users"`
+	Pricing     PricingConfig         `yaml:"pricing"`
+	Database    DatabaseConfig        `yaml:"database"`
+	HealthCheck HealthCheckConfig     `yaml:"health_check,omitempty"`
 }
 
 // ServerConfig controls the HTTP server.
@@ -41,13 +44,21 @@ type RateLimitingConfig struct {
 	TTL          time.Duration `yaml:"ttl,omitempty"` // bucket idle TTL before cleanup (default 1h)
 }
 
+// HealthCheckConfig defines periodic health check behavior for backends.
+type HealthCheckConfig struct {
+	IntervalSeconds    int `yaml:"interval_seconds"`    // how often to check each backend (default 10)
+	TimeoutSeconds     int `yaml:"timeout_seconds"`     // per-check HTTP timeout (default 5)
+	UnhealthyThreshold int `yaml:"unhealthy_threshold"` // consecutive failures before marking unhealthy (default 3)
+}
+
 // Backend represents a single Ollama backend server.
 type Backend struct {
-	Name    string            `yaml:"name"`
-	URL     string            `yaml:"url"`
-	Weight  int               `yaml:"weight"`            // weight for round-robin (default 1)
-	Headers map[string]string `yaml:"headers,omitempty"` // extra headers sent to backend
-	Timeout time.Duration     `yaml:"timeout"`           // per-request timeout override
+	Name            string            `yaml:"name"`
+	URL             string            `yaml:"url"`
+	Weight          int               `yaml:"weight"`                      // weight for round-robin (default 1)
+	Headers         map[string]string `yaml:"headers,omitempty"`           // extra headers sent to backend
+	Timeout         time.Duration     `yaml:"timeout"`                     // per-request timeout override
+	HealthCheckPath string            `yaml:"health_check_path,omitempty"` // path for health checks (default /api/version)
 }
 
 // ModelCatalog holds the global model definitions.
@@ -112,6 +123,10 @@ const (
 	// Global rate limit defaults (applied when not specified in config).
 	defaultRateLimitRate  float64 = 10.0 // tokens/sec refill
 	defaultRateLimitBurst int     = 50   // max burst capacity
+	// Health check defaults.
+	defaultHealthCheckInterval = 10 // seconds between checks
+	defaultHealthCheckTimeout  = 5  // per-check HTTP timeout in seconds
+	defaultUnhealthyThreshold  = 3  // consecutive failures before unhealthy
 )
 
 // Load reads the config from path, applies defaults and validates.
@@ -152,6 +167,9 @@ func applyDefaults(cfg *Config) {
 		if b.Timeout == 0 {
 			b.Timeout = defaultWriteTimeout
 		}
+		if b.HealthCheckPath == "" {
+			b.HealthCheckPath = "/api/version"
+		}
 	}
 	for k, m := range cfg.Models.Models {
 		m.Name = k // canonical name defaults to key; store back
@@ -179,18 +197,42 @@ func applyDefaults(cfg *Config) {
 			cfg.Users[userID] = u // write back since map iteration is by value
 		}
 	}
+	// Health check defaults
+	if cfg.HealthCheck.IntervalSeconds <= 0 {
+		cfg.HealthCheck.IntervalSeconds = defaultHealthCheckInterval
+	}
+	if cfg.HealthCheck.TimeoutSeconds <= 0 {
+		cfg.HealthCheck.TimeoutSeconds = defaultHealthCheckTimeout
+	}
+	if cfg.HealthCheck.UnhealthyThreshold <= 0 {
+		cfg.HealthCheck.UnhealthyThreshold = defaultUnhealthyThreshold
+	}
 }
 
 func validate(cfg *Config) error {
 	if len(cfg.Backends) == 0 {
 		return fmt.Errorf("at least one backend must be configured")
 	}
+	// Check for duplicate backend names.
+	seenNames := make(map[string]bool)
 	for _, b := range cfg.Backends {
 		if b.Name == "" {
 			return fmt.Errorf("backend name is required")
 		}
+		if seenNames[b.Name] {
+			return fmt.Errorf("duplicate backend name %q", b.Name)
+		}
+		seenNames[b.Name] = true
 		if b.URL == "" {
 			return fmt.Errorf("backend %q: url is required", b.Name)
+		}
+		// Validate URL has a scheme.
+		u, err := url.Parse(b.URL)
+		if err != nil || u.Scheme == "" {
+			return fmt.Errorf("backend %q: url must include http:// or https:// scheme", b.Name)
+		}
+		if !strings.HasPrefix(u.Scheme, "http") {
+			return fmt.Errorf("backend %q: unsupported url scheme %q (use http or https)", b.Name, u.Scheme)
 		}
 	}
 	for k, m := range cfg.Models.Models {

@@ -20,6 +20,7 @@ backends:
     url: "http://127.0.0.1:11434"
     weight: 10
     timeout: 120s
+    health_check_path: "/api/version" # optional; defaults to /api/version
     headers:
       # Optional extra headers sent to this backend on every request
       X-Backend-Tag: "local-gpu"
@@ -36,6 +37,11 @@ models:
       backends:
         - backend: local-gpu
           weight: 5
+
+health_check:
+  interval_seconds: 10 # how often to check each backend (default: 10)
+  timeout_seconds: 5 # per-check HTTP timeout (default: 5)
+  unhealthy_threshold: 3 # consecutive failures before marking unhealthy (default: 3)
 
 users:
   # Map of user identifier (e.g., API key label) to config.

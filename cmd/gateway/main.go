@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
+	"ollama-gateway/internal/models"
 	"ollama-gateway/internal/ratelimit"
 )
 
@@ -44,7 +46,26 @@ func main() {
 		"default_burst", cfg.RateLimit.DefaultBurst,
 		"ttl", cfg.RateLimit.TTL)
 
-	// TODO: wire up models/backends, proxy, usage, dashboard.
+	// Phase 4: Model registry & backend routing setup
+	resolver, err := models.NewResolver(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "model/backend error: %v\n", err)
+		os.Exit(1)
+	}
+	logger.Info("model resolver initialized",
+		"models", len(resolver.Registry().AllModels()),
+		"backends", len(resolver.Manager().Backends()))
+
+	// Start health checker in background.
+	ctx := context.Background()
+	go func() {
+		resolver.Manager().HealthChecker().Run(ctx)
+	}()
+	logger.Info("health checker started",
+		"interval_seconds", cfg.HealthCheck.IntervalSeconds,
+		"timeout_seconds", cfg.HealthCheck.TimeoutSeconds)
+
+	// TODO: wire up proxy (Phase 5), usage tracking (Phase 6), dashboard (Phase 7).
 	_ = authStore   // placeholder until subsequent phases
 	_ = rateLimitMw // placeholder — applied in server/routes.go (Phase 5+)
 }
