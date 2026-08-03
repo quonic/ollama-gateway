@@ -31,55 +31,43 @@ func newStreamingUsageCaptureWriter(w io.Writer) *streamingUsageCaptureWriter {
 // Write processes the byte slice line-by-line, extracting token counts from each JSON chunk
 // before forwarding it to the underlying writer unchanged. Incomplete trailing lines are buffered.
 func (w *streamingUsageCaptureWriter) Write(p []byte) (int, error) {
-	written := 0
-	for len(p) > 0 {
-		nl := bytes.IndexByte(p, '\n')
-		if nl == -1 {
-			// No newline — buffer the remainder for next call.
-			w.buf = append(w.buf, p...)
-			return len(p), nil
-		}
-
-		// Build the complete line by prepending any buffered partial content from a previous write.
-		var fullLine []byte
-		bufLen := len(w.buf)
-		if bufLen > 0 {
-			fullLine = append(append([]byte{}, w.buf...), p[:nl]...)
-			w.buf = w.buf[:0] // clear buffer now that content is copied into fullLine
-		} else {
-			fullLine = p[:nl]
-		}
-
-		// Parse the JSON chunk for token counts (non-fatal: failure just skips extraction).
-		var chunk map[string]interface{}
-		if json.Unmarshal(fullLine, &chunk) == nil {
-			// prompt_eval_count appears in the first non-empty chunk; capture once.
-			if w.promptTokens == 0 {
-				if pc, ok := chunk["prompt_eval_count"].(float64); ok {
-					w.promptTokens = int(pc)
-				}
-			}
-			// eval_count accumulates and is overwritten by later chunks (final value wins).
-			if ec, ok := chunk["eval_count"].(float64); ok {
-				w.evalTokens = int(ec)
-			}
-		}
-
-		// Forward the original line + newline to the client unchanged. If there was buffered content,
-		// prepend it so nothing is lost between writes.
-		toWrite := p[:nl+1]
-		if bufLen > 0 {
-			toWrite = append(fullLine[:bufLen:bufLen], p[:nl+1]...) // reconstruct buffered + new segment with newline
-		}
-		n, err := w.w.Write(toWrite)
-		if err != nil {
-			return written + n, err
-		}
-		written += n
-
-		p = p[nl+1:]
+	// Always pass bytes through immediately so Content-Length stays accurate for clients.
+	n, err := w.w.Write(p)
+	if n <= 0 {
+		return n, err
 	}
-	return written, nil
+
+	w.parseForUsage(p[:n])
+	return n, err
+}
+
+// parseForUsage scans newline-delimited chunks and updates captured token stats.
+func (w *streamingUsageCaptureWriter) parseForUsage(p []byte) {
+	w.buf = append(w.buf, p...)
+
+	for {
+		nl := bytes.IndexByte(w.buf, '\n')
+		if nl == -1 {
+			return
+		}
+
+		line := w.buf[:nl]
+		w.buf = w.buf[nl+1:]
+
+		var chunk map[string]interface{}
+		if json.Unmarshal(line, &chunk) != nil {
+			continue
+		}
+
+		if w.promptTokens == 0 {
+			if pc, ok := chunk["prompt_eval_count"].(float64); ok {
+				w.promptTokens = int(pc)
+			}
+		}
+		if ec, ok := chunk["eval_count"].(float64); ok {
+			w.evalTokens = int(ec)
+		}
+	}
 }
 
 // Flush is a no-op pass-through; the underlying ResponseWriter handles actual flushing.

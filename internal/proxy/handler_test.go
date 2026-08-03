@@ -78,6 +78,25 @@ func TestStreamingCapture_HandlesSplitLines(t *testing.T) {
 	}
 }
 
+func TestStreamingCapture_PassesThroughWithoutTrailingNewline(t *testing.T) {
+	var buf bytes.Buffer
+	w := newStreamingUsageCaptureWriter(&buf)
+
+	body := `{"model":"llama3","response":"Hello.","prompt_eval_count":12,"eval_count":8,"done":true}`
+
+	n, err := w.Write([]byte(body))
+	if err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+	if n != len(body) {
+		t.Fatalf("expected write length %d, got %d", len(body), n)
+	}
+
+	if got := buf.String(); got != body {
+		t.Fatalf("output should pass through unchanged, got %q want %q", got, body)
+	}
+}
+
 func TestStreamingCapture_MalformedJSONDoesNotBreak(t *testing.T) {
 	var buf bytes.Buffer
 	w := newStreamingUsageCaptureWriter(&buf)
