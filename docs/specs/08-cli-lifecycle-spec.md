@@ -1,4 +1,4 @@
-# CLI and Lifecycle Specification
+# CLI and Lifecycle Specification (Current Runtime)
 
 ## 1. Purpose
 
@@ -16,33 +16,25 @@ Behavior:
 
 1. Load configuration
 2. Validate configuration
-3. Initialize database and schema
+3. Initialize database and schema (SQLite)
 4. Start HTTP server
 5. Begin background health checks and usage logger goroutines
 
-### 2.2 Validate Configuration
+### 2.2 Optional Startup Flag
 
 ```bash
-gateway validate --config /path/to/config.yaml
+gateway --config /path/to/config.yaml --seed-model-catalog
 ```
 
 Behavior:
 
-- Loads and validates configuration
-- Prints errors and exits non-zero on validation failure
-- Does not start the server
+- If the DB catalog is empty, seeds it once from YAML `models` before discovery sync.
+- Server still starts normally after seeding.
 
-### 2.3 Generate API Key
+### 2.3 Not Implemented as CLI Subcommands
 
-```bash
-gateway gen-key
-```
-
-Behavior:
-
-- Generates a raw key and its SHA-256 hash
-- Prints both values once to stdout
-- Does not write to disk or modify config
+The current binary does not implement `validate` or `gen-key` subcommands.
+Key generation and user management are currently handled in `/admin/users`.
 
 ## 3. Startup Sequence
 
@@ -50,10 +42,10 @@ The startup process must follow this order:
 
 1. Parse CLI args
 2. Resolve config path
-3. Load config from file and environment overrides
+3. Load config from file
 4. Validate config values
 5. Initialize DB connection and schema
-6. Construct runtime services
+6. Initialize auth, backend, model, pricing, and usage runtime services
 7. Register routes and middleware
 8. Start HTTP server
 
@@ -73,7 +65,8 @@ On SIGINT or SIGTERM:
 | ---- | -------------------------------- |
 | `0`  | Clean shutdown                   |
 | `1`  | Configuration or startup failure |
-| `2`  | Invalid CLI usage                |
+
+There is no dedicated non-zero exit code contract for invalid subcommand usage because subcommands are not implemented.
 
 ## 6. Logging and Diagnostics
 
