@@ -97,7 +97,7 @@ func main() {
 	}
 
 	// Phase 5: Reverse proxy handler setup.
-	proxyHandler := proxy.NewProxyHandler(resolver, usageLogger)
+	proxyHandler := proxy.NewProxyHandler(resolver, usageLogger, authStore)
 
 	// Start health checker in background.
 	ctx := context.Background()

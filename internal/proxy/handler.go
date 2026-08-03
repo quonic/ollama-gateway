@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -20,14 +21,15 @@ import (
 // It handles model resolution, weighted round-robin backend selection, streaming passthrough,
 // and response body parsing for usage tracking.
 type ProxyHandler struct {
-	resolver *models.Resolver
-	logger   *usage.UsageLogger
+	resolver  *models.Resolver
+	logger    *usage.UsageLogger
+	authStore *auth.Store
 }
 
 // NewProxyHandler creates a new ProxyHandler from the given model resolver (which wraps both
-// the model registry and backend manager) and an async usage logger.
-func NewProxyHandler(resolver *models.Resolver, logger *usage.UsageLogger) *ProxyHandler {
-	return &ProxyHandler{resolver: resolver, logger: logger}
+// the model registry and backend manager), an async usage logger, and an auth store for user-specific overrides.
+func NewProxyHandler(resolver *models.Resolver, logger *usage.UsageLogger, authStore *auth.Store) *ProxyHandler {
+	return &ProxyHandler{resolver: resolver, logger: logger, authStore: authStore}
 }
 
 // ServeHTTP is the main entry point for all proxied /api/* requests.
@@ -48,12 +50,16 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// GET /api/tags, /api/ps, /api/version don't need a model — route via default backend selection.
-	pool, poolErr := h.resolveBackendPool(modelName)
-	if pool == nil {
-		// resolveBackendPool already wrote an error response if applicable.
+	pool, err := h.resolveBackendPool(r.Context(), modelName)
+	if err != nil {
+		var resErr *models.ResolutionError
+		if errors.As(err, &resErr) {
+			writeJSONError(w, resErr.StatusCode, resErr.Message)
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	_ = poolErr
 
 	backend, selErr := pool.Select()
 	if selErr != nil {
@@ -89,8 +95,15 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveBackendPool resolves the requested model to a backend pool using per-user overrides derived from auth context.
-func (h *ProxyHandler) resolveBackendPool(modelName string) (*backends.BackendPool, error) {
-	overrides := models.UserOverrides{} // TODO: populate from user config store in Phase 2
+func (h *ProxyHandler) resolveBackendPool(ctx context.Context, modelName string) (*backends.BackendPool, error) {
+	overrides := models.UserOverrides{}
+	if h.authStore != nil {
+		if ac, ok := auth.FromContext(ctx); ok && ac != nil && h.authStore != nil {
+			if uc, found := h.authStore.GetUserConfig(ac.KeyID); found {
+				overrides = models.FromUserConfig(uc)
+			}
+		}
+	}
 
 	if modelName == "" {
 		// No model needed — select any healthy backend via a default pool.
@@ -109,19 +122,24 @@ func (h *ProxyHandler) buildReverseProxy(backend *backends.Backend, startTime ti
 	targetURL := *backend.URL // copy to avoid mutating shared state
 
 	rp := &httputil.ReverseProxy{
-		Rewrite: func(req *httputil.ProxyRequest) {
-			// Set the target URL to backend base + original request path (e.g. /api/generate).
-			req.SetURL(targetURL.ResolveReference(req.In.URL))
+		Director: func(req *http.Request) {
+			// Preserve the original request path and query while targeting the selected backend.
+			req.URL.Scheme = targetURL.Scheme
+			req.URL.Host = targetURL.Host
+			req.Host = req.URL.Host
+			if req.URL.RawQuery == "" {
+				req.URL.RawQuery = req.URL.Query().Encode()
+			}
 
 			// Add forwarding headers per spec section 5.
-			if clientIP := getClientIP(req.In); clientIP != "" {
-				req.Out.Header.Set("X-Forwarded-For", clientIP)
+			if clientIP := getClientIP(req); clientIP != "" {
+				req.Header.Set("X-Forwarded-For", clientIP)
 			}
-			req.Out.Header.Set("X-Forwarded-Host", req.In.Host)
-			req.Out.Header.Set("X-Forwarded-Proto", "http")
+			req.Header.Set("X-Forwarded-Host", req.Host)
+			req.Header.Set("X-Forwarded-Proto", "http")
 
 			// Apply backend-specific extra headers.
-			applyHeaders(req.Out, backend.Headers)
+			applyHeaders(req, backend.Headers)
 		},
 		Transport: newTransport(backend),
 		ModifyResponse: func(resp *http.Response) error {
@@ -217,6 +235,22 @@ func streamingInterceptorFromContext(ctx context.Context) (*streamingResponseInt
 	sri, ok := ctx.Value(streamingInterceptorKey{}).(*streamingResponseInterceptor)
 	return sri, ok
 }
+func joinURLPath(basePath, requestPath string) string {
+	if requestPath == "" {
+		requestPath = "/"
+	}
+	if basePath == "" || basePath == "/" {
+		return requestPath
+	}
+	if requestPath == "/" {
+		return basePath
+	}
+	if strings.HasSuffix(basePath, "/") {
+		return basePath + strings.TrimPrefix(requestPath, "/")
+	}
+	return basePath + requestPath
+}
+
 func (h *ProxyHandler) isStreamingGenerate(r *http.Request) bool {
 	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/api/generate") {
 		return false

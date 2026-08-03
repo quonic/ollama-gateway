@@ -9,6 +9,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"ollama-gateway/internal/auth"
+	"ollama-gateway/internal/config"
+	"ollama-gateway/internal/models"
 )
 
 // --- streamingUsageCaptureWriter tests ---
@@ -259,5 +263,83 @@ func TestUsageStatsJSONRoundTrip(t *testing.T) {
 	}
 	if ec, ok := decoded["EvalTokens"].(float64); !ok || int(ec) != 17 {
 		t.Errorf("expected EvalTokens=17 in JSON, got %+v", decoded["EvalTokens"])
+	}
+}
+
+func TestResolveBackendPool_RespectsUserDenyList(t *testing.T) {
+	cfg := &config.Config{
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434", Weight: 1}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3": {Name: "llama3", Backends: []config.ModelBackendRef{{Backend: "local", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: "demo-hash", ModelDeny: []string{"llama3"}},
+		},
+		HealthCheck: config.HealthCheckConfig{IntervalSeconds: 1, TimeoutSeconds: 1, UnhealthyThreshold: 1},
+	}
+
+	resolver, err := models.NewResolver(cfg)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+
+	authStore := auth.NewStore(cfg)
+	h := NewProxyHandler(resolver, nil, authStore)
+	ctx := auth.WithAuthContext(context.Background(), &auth.AuthContext{KeyID: "demo"})
+
+	_, err = h.resolveBackendPool(ctx, "llama3")
+	if err == nil {
+		t.Fatal("expected denied model to return an error")
+	}
+	if !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("expected denied-model error, got %q", err.Error())
+	}
+}
+
+func TestProxyHandler_ServeHTTP_ProxiesToSelectedBackend(t *testing.T) {
+	var receivedPath string
+	var receivedModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		receivedModel = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		Backends: []config.Backend{{Name: "local", URL: upstream.URL, Weight: 1}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3": {Name: "llama3", Backends: []config.ModelBackendRef{{Backend: "local", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+		HealthCheck: config.HealthCheckConfig{IntervalSeconds: 1, TimeoutSeconds: 1, UnhealthyThreshold: 1},
+	}
+
+	resolver, err := models.NewResolver(cfg)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+	authStore := auth.NewStore(cfg)
+	h := NewProxyHandler(resolver, nil, authStore)
+
+	body := `{"model":"llama3","prompt":"hi"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(body))
+	req.Header.Set("X-API-Key", "demo-key")
+	rec := httptest.NewRecorder()
+
+	authStore.Middleware(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if receivedPath != "/api/generate" {
+		t.Fatalf("expected upstream path /api/generate, got %q", receivedPath)
+	}
+	if !strings.Contains(receivedModel, "\"model\":\"llama3\"") {
+		t.Fatalf("expected request body to reach upstream, got %q", receivedModel)
 	}
 }
