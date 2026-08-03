@@ -46,29 +46,22 @@
   </ul>
 </div>
 {{ end }}
-{{ if .ConfigReloadStatus }}
 <div class="card">
-  <h3>Config Reload</h3>
+  <h3>Backend Status</h3>
   <ul class="stack-list">
+    {{ range .Backends }}
     <li>
-      <strong>Status</strong>
-      <span class="pill {{ index .ConfigReloadStatus "StatusClass" }}">{{ index .ConfigReloadStatus "StatusLabel" }}</span>
+      <strong class="mono">{{ .Name }}</strong>
+      <span
+        class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
+      >
+        {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end
+        }}
+      </span>
     </li>
-    <li>
-      <strong>Last Trigger</strong>
-      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastTrigger" }}</span>
-    </li>
-    <li>
-      <strong>Last Reload</strong>
-      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastReloadAt" }}</span>
-    </li>
-    <li>
-      <strong>Last Error</strong>
-      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastError" }}</span>
-    </li>
+    {{ end }}
   </ul>
 </div>
-{{ end }}
 {{ if .Summary }}
 <div class="cards">
   <div class="card">
@@ -102,20 +95,28 @@
   </ul>
 </div>
 {{ end }}
+{{ if .ConfigReloadStatus }}
 <div class="card">
-  <h3>Backend Status</h3>
+  <h3>Config Reload</h3>
   <ul class="stack-list">
-    {{ range .Backends }}
     <li>
-      <strong class="mono">{{ .Name }}</strong>
-      <span
-        class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
-      >
-        {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end
-        }}
-      </span>
+      <strong>Status</strong>
+      <span class="pill {{ index .ConfigReloadStatus "StatusClass" }}">{{ index .ConfigReloadStatus "StatusLabel" }}</span>
     </li>
-    {{ end }}
+    <li>
+      <strong>Last Trigger</strong>
+      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastTrigger" }}</span>
+    </li>
+    <li>
+      <strong>Last Reload</strong>
+      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastReloadAt" }}</span>
+    </li>
+    <li>
+      <strong>Last Error</strong>
+      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastError" }}</span>
+    </li>
   </ul>
 </div>
-{{ end }} {{ define "overview.html" }}{{ template "layout.html" . }}{{ end }}
+{{ end }}
+{{ end }}
+{{ define "overview.html" }}{{ template "layout.html" . }}{{ end }}
