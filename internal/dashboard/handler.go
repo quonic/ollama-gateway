@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ollama-gateway/internal/auth"
+	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/usage"
 )
@@ -21,6 +22,7 @@ type Handler struct {
 	usageStore *usage.Store
 	templates  *template.Template
 	state      *state
+	manager    *backends.Manager
 }
 
 type state struct {
@@ -35,6 +37,9 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 		state: &state{
 			disabledBackends: make(map[string]bool),
 		},
+	}
+	if manager, err := backends.NewManager(cfg); err == nil {
+		h.manager = manager
 	}
 	if templates == nil {
 		t, err := template.New("dashboard").Funcs(template.FuncMap{
@@ -246,6 +251,20 @@ func (h *Handler) handleBackendToggle(w http.ResponseWriter, path string) {
 	if name == "" || name == "backends/toggle/" {
 		h.httpError(w, http.StatusBadRequest, "backend name required")
 		return
+	}
+	if h.manager != nil {
+		if b, ok := h.manager.GetByName(name); ok {
+			if h.state.disabledBackends[name] {
+				delete(h.state.disabledBackends, name)
+				b.SetEnabled(true)
+				fmt.Fprintf(w, "Backend %q enabled", name)
+				return
+			}
+			h.state.disabledBackends[name] = true
+			b.SetEnabled(false)
+			fmt.Fprintf(w, "Backend %q disabled", name)
+			return
+		}
 	}
 	if h.state.disabledBackends[name] {
 		delete(h.state.disabledBackends, name)

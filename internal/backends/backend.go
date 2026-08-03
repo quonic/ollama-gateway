@@ -22,6 +22,9 @@ type Backend struct {
 	healthy       bool      // Current health status
 	lastCheckTime time.Time // When this backend was last checked
 	failureCount  int       // Consecutive failure count (resets on success)
+
+	// Runtime admin state — these are not persisted and can be toggled live.
+	enabled bool // Whether this backend is currently allowed to receive traffic
 }
 
 // NewBackend creates a Backend from config values, initializing scheduling state.
@@ -42,13 +45,24 @@ func NewBackend(name string, rawURL string, weight int, healthCheckPath string, 
 		effectiveWeight: weight,
 		currentWeight:   0,
 		healthy:         true, // starts optimistic; first health check will confirm or deny
+		enabled:         true,
 	}
 	return b, nil
 }
 
 // IsHealthy returns whether this backend is currently considered healthy.
 func (b *Backend) IsHealthy() bool {
-	return b.healthy
+	return b.healthy && b.enabled
+}
+
+// SetEnabled toggles whether this backend is allowed to receive traffic at runtime.
+func (b *Backend) SetEnabled(enabled bool) {
+	b.enabled = enabled
+}
+
+// IsEnabled returns whether this backend is currently enabled for routing.
+func (b *Backend) IsEnabled() bool {
+	return b.enabled
 }
 
 // SetHealth updates the health status and adjusts effectiveWeight accordingly.

@@ -132,3 +132,19 @@ func TestSelect_EmptyPool(t *testing.T) {
 		t.Errorf("expected ErrNoHealthyBackends for empty pool, got sel=%v err=%v", sel, err)
 	}
 }
+
+func TestSelect_SkipsDisabledBackends(t *testing.T) {
+	b1 := newTestBackend("b1", "http://localhost:11434", 50)
+	b2 := newTestBackend("b2", "http://localhost:11435", 30)
+	b2.SetEnabled(false)
+
+	pool := NewBackendPool([]ModelBackendWeight{{Backend: b1, Weight: 50}, {Backend: b2, Weight: 30}})
+
+	sel, err := pool.Select()
+	if err != nil {
+		t.Fatalf("expected selection to succeed, got %v", err)
+	}
+	if sel != b1 {
+		t.Fatalf("expected enabled backend b1, got %s", sel.Name)
+	}
+}
