@@ -55,20 +55,13 @@ func main() {
 		"default_burst", cfg.RateLimit.DefaultBurst,
 		"ttl", cfg.RateLimit.TTL)
 
-	// Phase 4: Model registry & backend routing setup
-	resolver, err := models.NewResolver(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "model/backend error: %v\n", err)
-		os.Exit(1)
-	}
-	logger.Info("model resolver initialized",
-		"models", len(resolver.Registry().AllModels()),
-		"backends", len(resolver.Manager().Backends()))
+	activeCatalog := models.CatalogFromConfig(cfg)
 
-	// Phase 6: Usage tracking setup
+	// Phase 4: Usage tracking setup and DB-backed model catalog storage
 	var (
 		usageLogger *usage.UsageLogger
 		dbStore     *usage.Store
+		modelStore  *models.Store
 	)
 	if cfg.Database.Path != "" {
 		dbStore, err = usage.NewStore(cfg.Database.Path)
@@ -77,6 +70,33 @@ func main() {
 			os.Exit(1)
 		}
 		defer dbStore.Close()
+
+		modelStore = models.NewStore(dbStore.DB())
+
+		discoveryCtx, cancelDiscovery := context.WithTimeout(context.Background(), 20*time.Second)
+		discoveredCatalog, discoverErr := models.DiscoverCatalogFromBackends(discoveryCtx, cfg)
+		cancelDiscovery()
+
+		if discoverErr != nil {
+			logger.Warn("model discovery had issues", "error", discoverErr)
+		}
+
+		if discoverErr == nil || len(discoveredCatalog) > 0 {
+			if err := modelStore.SyncDiscoveredCatalog(discoveredCatalog); err != nil {
+				logger.Warn("model sync failed; continuing with cached database state", "error", err)
+			} else {
+				logger.Info("model sync completed", "discovered_models", len(discoveredCatalog))
+			}
+		}
+
+		dbCatalog, err := modelStore.LoadActiveCatalog()
+		if err != nil {
+			logger.Warn("failed to load active model catalog from database; using config fallback", "error", err)
+		} else if len(dbCatalog) == 0 {
+			logger.Warn("database model catalog is empty; using config fallback")
+		} else {
+			activeCatalog = dbCatalog
+		}
 
 		pricingCfg := &usage.PricingConfig{
 			DefaultInputPer1M:  cfg.Pricing.DefaultInputPer1M,
@@ -95,6 +115,16 @@ func main() {
 	} else {
 		logger.Warn("no database path configured; usage tracking disabled")
 	}
+
+	// Phase 5: Model registry & backend routing setup
+	resolver, err := models.NewResolverWithCatalog(cfg, activeCatalog)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "model/backend error: %v\n", err)
+		os.Exit(1)
+	}
+	logger.Info("model resolver initialized",
+		"models", len(resolver.Registry().AllModels()),
+		"backends", len(resolver.Manager().Backends()))
 
 	// Phase 5: Reverse proxy handler setup.
 	proxyHandler := proxy.NewProxyHandler(resolver, usageLogger, authStore)
@@ -131,6 +161,7 @@ func main() {
 		os.Exit(1)
 	}
 	dashboardHandler.SetManager(resolver.Manager())
+	dashboardHandler.SetModelCatalog(activeCatalog)
 
 	mux.Handle("/api/", authStore.Middleware(rateLimitMw.Handler(apiRouter)))
 	mux.Handle("/admin/", dashboardHandler)

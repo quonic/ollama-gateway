@@ -78,6 +78,26 @@ CREATE TABLE IF NOT EXISTS usage_records (
 CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_records(timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_api_key_id ON usage_records(api_key_id);
 CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_records(model);
+
+CREATE TABLE IF NOT EXISTS models (
+	name                TEXT PRIMARY KEY,
+	display_name        TEXT,
+	active              INTEGER NOT NULL DEFAULT 1,
+	last_discovered_at  DATETIME,
+	created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_backends (
+	model_name      TEXT NOT NULL,
+	backend_name    TEXT NOT NULL,
+	weight          INTEGER NOT NULL DEFAULT 1,
+	PRIMARY KEY (model_name, backend_name),
+	FOREIGN KEY (model_name) REFERENCES models(name) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_models_active ON models(active);
+CREATE INDEX IF NOT EXISTS idx_model_backends_backend_name ON model_backends(backend_name);
 	`)
 	return err
 }

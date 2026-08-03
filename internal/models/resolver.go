@@ -35,14 +35,19 @@ type Resolver struct {
 // NewResolver creates a resolver from config, building both the model registry
 // and backend manager from the same configuration source.
 func NewResolver(cfg *config.Config) (*Resolver, error) {
-	reg := buildRegistry(cfg)
+	return NewResolverWithCatalog(cfg, CatalogFromConfig(cfg))
+}
+
+// NewResolverWithCatalog creates a resolver using a provided model catalog.
+func NewResolverWithCatalog(cfg *config.Config, catalog map[string]config.ModelEntry) (*Resolver, error) {
+	reg := buildRegistryFromCatalog(catalog)
 	mgr, err := backends.NewManager(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	weights := make(map[string][]config.ModelBackendRef, len(cfg.Models.Models))
-	for name, mc := range cfg.Models.Models {
+	weights := make(map[string][]config.ModelBackendRef, len(catalog))
+	for name, mc := range catalog {
 		refs := make([]config.ModelBackendRef, 0, len(mc.Backends))
 		for _, br := range mc.Backends {
 			refs = append(refs, config.ModelBackendRef{
@@ -109,11 +114,23 @@ func (r *Resolver) Manager() *backends.Manager {
 	return r.manager
 }
 
-// buildRegistry constructs a ModelRegistry from config, converting the YAML map
-// structure into the registry's internal entry format.
-func buildRegistry(cfg *config.Config) *ModelRegistry {
-	entries := make(map[string]ModelEntry, len(cfg.Models.Models))
+// CatalogFromConfig copies the model catalog from config for independent mutation.
+func CatalogFromConfig(cfg *config.Config) map[string]config.ModelEntry {
+	out := make(map[string]config.ModelEntry, len(cfg.Models.Models))
 	for name, mc := range cfg.Models.Models {
+		refs := make([]config.ModelBackendRef, 0, len(mc.Backends))
+		for _, br := range mc.Backends {
+			refs = append(refs, config.ModelBackendRef{Backend: br.Backend, Weight: br.Weight})
+		}
+		out[name] = config.ModelEntry{Name: mc.Name, Backends: refs}
+	}
+	return out
+}
+
+// buildRegistryFromCatalog converts config model entries into internal registry entries.
+func buildRegistryFromCatalog(catalog map[string]config.ModelEntry) *ModelRegistry {
+	entries := make(map[string]ModelEntry, len(catalog))
+	for name, mc := range catalog {
 		entry := ModelEntry{
 			Name:     mc.Name,
 			Backends: make([]string, 0, len(mc.Backends)),

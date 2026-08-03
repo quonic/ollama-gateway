@@ -26,6 +26,7 @@ type Handler struct {
 	templates  *template.Template
 	state      *state
 	manager    *backends.Manager
+	models     map[string]config.ModelEntry
 }
 
 type state struct {
@@ -64,6 +65,29 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 
 func (h *Handler) SetManager(manager *backends.Manager) {
 	h.manager = manager
+}
+
+func (h *Handler) SetModelCatalog(catalog map[string]config.ModelEntry) {
+	if catalog == nil {
+		h.models = nil
+		return
+	}
+	cloned := make(map[string]config.ModelEntry, len(catalog))
+	for name, entry := range catalog {
+		refs := make([]config.ModelBackendRef, 0, len(entry.Backends))
+		for _, ref := range entry.Backends {
+			refs = append(refs, config.ModelBackendRef{Backend: ref.Backend, Weight: ref.Weight})
+		}
+		cloned[name] = config.ModelEntry{Name: entry.Name, Backends: refs}
+	}
+	h.models = cloned
+}
+
+func (h *Handler) currentModelCatalog() map[string]config.ModelEntry {
+	if h.models != nil {
+		return h.models
+	}
+	return h.cfg.Models.Models
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -163,13 +187,14 @@ func (h *Handler) renderLogin(w http.ResponseWriter, r *http.Request, invalid bo
 }
 
 func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
+	models := h.currentModelCatalog()
 	data := map[string]any{
 		"Title":            "Overview",
 		"Subtitle":         "Live snapshot of gateway capacity, spend, and backend health.",
 		"Active":           "overview",
 		"ContentBlock":     "content-overview",
 		"BackendCount":     len(h.cfg.Backends),
-		"ModelCount":       len(h.cfg.Models.Models),
+		"ModelCount":       len(models),
 		"UserCount":        len(h.cfg.Users),
 		"Backends":         h.cfg.Backends,
 		"DisabledBackends": h.state.disabledBackends,
@@ -187,12 +212,13 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
+	models := h.currentModelCatalog()
 	data := map[string]any{
 		"Title":            "Models",
 		"Subtitle":         "Routing map from model aliases to backend targets.",
 		"Active":           "models",
 		"ContentBlock":     "content-models",
-		"Models":           h.cfg.Models.Models,
+		"Models":           models,
 		"Backends":         h.cfg.Backends,
 		"DisabledBackends": h.state.disabledBackends,
 	}
