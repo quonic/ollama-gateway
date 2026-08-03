@@ -222,10 +222,10 @@ func TestAdminPagesRenderOwnContent(t *testing.T) {
 	}
 
 	tests := []struct {
-		name             string
-		path             string
-		mustContain      string
-		mustNotContain   string
+		name           string
+		path           string
+		mustContain    string
+		mustNotContain string
 	}{
 		{name: "overview", path: "/admin/overview", mustContain: "Configured Backends", mustNotContain: "Generated API Key"},
 		{name: "models", path: "/admin/models", mustContain: "Model Catalog", mustNotContain: "Backend Controls"},
