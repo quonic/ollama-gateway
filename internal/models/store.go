@@ -15,6 +15,13 @@ type Store struct {
 	db *sql.DB
 }
 
+// SyncStats captures model catalog sync changes for startup logging.
+type SyncStats struct {
+	Added       int
+	Updated     int
+	Deactivated int
+}
+
 // NewStore creates a model catalog store over an existing database connection.
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
@@ -71,12 +78,72 @@ ORDER BY m.name, mb.backend_name`)
 
 // SyncDiscoveredCatalog reconciles DB model rows against newly discovered catalog data.
 // Add/update operations are applied, and models missing from discovered data are soft-deactivated.
-func (s *Store) SyncDiscoveredCatalog(catalog map[string]config.ModelEntry) error {
+func (s *Store) SyncDiscoveredCatalog(catalog map[string]config.ModelEntry) (SyncStats, error) {
+	catalog = NormalizeCatalog(catalog)
+	stats := SyncStats{}
+
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin model sync: %w", err)
+		return stats, fmt.Errorf("begin model sync: %w", err)
 	}
 	defer tx.Rollback()
+
+	type existingState struct {
+		active bool
+		refs   map[string]int
+	}
+	existing := make(map[string]existingState)
+
+	modelRows, err := tx.Query(`SELECT name, active FROM models`)
+	if err != nil {
+		return stats, fmt.Errorf("query existing models: %w", err)
+	}
+	for modelRows.Next() {
+		var (
+			name   string
+			active int
+		)
+		if err := modelRows.Scan(&name, &active); err != nil {
+			modelRows.Close()
+			return stats, fmt.Errorf("scan existing model: %w", err)
+		}
+		existing[name] = existingState{active: active != 0, refs: make(map[string]int)}
+	}
+	if err := modelRows.Err(); err != nil {
+		modelRows.Close()
+		return stats, fmt.Errorf("iterate existing models: %w", err)
+	}
+	modelRows.Close()
+
+	refRows, err := tx.Query(`SELECT model_name, backend_name, weight FROM model_backends`)
+	if err != nil {
+		return stats, fmt.Errorf("query existing model backends: %w", err)
+	}
+	for refRows.Next() {
+		var (
+			modelName   string
+			backendName string
+			weight      int
+		)
+		if err := refRows.Scan(&modelName, &backendName, &weight); err != nil {
+			refRows.Close()
+			return stats, fmt.Errorf("scan existing model backend: %w", err)
+		}
+		state, ok := existing[modelName]
+		if !ok {
+			state = existingState{refs: make(map[string]int)}
+		}
+		if state.refs == nil {
+			state.refs = make(map[string]int)
+		}
+		state.refs[backendName] = weight
+		existing[modelName] = state
+	}
+	if err := refRows.Err(); err != nil {
+		refRows.Close()
+		return stats, fmt.Errorf("iterate existing model backends: %w", err)
+	}
+	refRows.Close()
 
 	names := make([]string, 0, len(catalog))
 	for name := range catalog {
@@ -92,19 +159,19 @@ ON CONFLICT(name) DO UPDATE SET
     last_discovered_at = CURRENT_TIMESTAMP,
     updated_at = CURRENT_TIMESTAMP`)
 	if err != nil {
-		return fmt.Errorf("prepare model upsert: %w", err)
+		return stats, fmt.Errorf("prepare model upsert: %w", err)
 	}
 	defer upsertModelStmt.Close()
 
 	deleteRefsStmt, err := tx.Prepare(`DELETE FROM model_backends WHERE model_name = ?`)
 	if err != nil {
-		return fmt.Errorf("prepare backend ref delete: %w", err)
+		return stats, fmt.Errorf("prepare backend ref delete: %w", err)
 	}
 	defer deleteRefsStmt.Close()
 
 	insertRefStmt, err := tx.Prepare(`INSERT INTO model_backends (model_name, backend_name, weight) VALUES (?, ?, ?)`)
 	if err != nil {
-		return fmt.Errorf("prepare backend ref insert: %w", err)
+		return stats, fmt.Errorf("prepare backend ref insert: %w", err)
 	}
 	defer insertRefStmt.Close()
 
@@ -116,13 +183,10 @@ ON CONFLICT(name) DO UPDATE SET
 		}
 
 		if _, err := upsertModelStmt.Exec(modelName, displayName); err != nil {
-			return fmt.Errorf("upsert model %q: %w", modelName, err)
+			return stats, fmt.Errorf("upsert model %q: %w", modelName, err)
 		}
 
-		if _, err := deleteRefsStmt.Exec(modelName); err != nil {
-			return fmt.Errorf("delete existing backend refs for model %q: %w", modelName, err)
-		}
-
+		normalizedRefs := make(map[string]int)
 		for _, ref := range entry.Backends {
 			if ref.Backend == "" {
 				continue
@@ -131,15 +195,45 @@ ON CONFLICT(name) DO UPDATE SET
 			if weight <= 0 {
 				weight = backends.DefaultModelWeight
 			}
-			if _, err := insertRefStmt.Exec(modelName, ref.Backend, weight); err != nil {
-				return fmt.Errorf("insert backend ref for model %q: %w", modelName, err)
+			normalizedRefs[ref.Backend] = weight
+		}
+
+		existingState, exists := existing[modelName]
+		if !exists {
+			stats.Added++
+		} else {
+			changed := !existingState.active || len(existingState.refs) != len(normalizedRefs)
+			if !changed {
+				for backend, weight := range normalizedRefs {
+					if ew, ok := existingState.refs[backend]; !ok || ew != weight {
+						changed = true
+						break
+					}
+				}
+			}
+			if changed {
+				stats.Updated++
+			}
+		}
+
+		if _, err := deleteRefsStmt.Exec(modelName); err != nil {
+			return stats, fmt.Errorf("delete existing backend refs for model %q: %w", modelName, err)
+		}
+
+		for backend, weight := range normalizedRefs {
+			if _, err := insertRefStmt.Exec(modelName, backend, weight); err != nil {
+				return stats, fmt.Errorf("insert backend ref for model %q: %w", modelName, err)
 			}
 		}
 	}
 
 	if len(names) == 0 {
-		if _, err := tx.Exec(`UPDATE models SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE active <> 0`); err != nil {
-			return fmt.Errorf("soft-deactivate all models: %w", err)
+		res, err := tx.Exec(`UPDATE models SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE active <> 0`)
+		if err != nil {
+			return stats, fmt.Errorf("soft-deactivate all models: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			stats.Deactivated += int(n)
 		}
 	} else {
 		placeholders := strings.TrimRight(strings.Repeat("?,", len(names)), ",")
@@ -151,14 +245,18 @@ ON CONFLICT(name) DO UPDATE SET
 			"UPDATE models SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE active <> 0 AND name NOT IN (%s)",
 			placeholders,
 		)
-		if _, err := tx.Exec(query, args...); err != nil {
-			return fmt.Errorf("soft-deactivate stale models: %w", err)
+		res, err := tx.Exec(query, args...)
+		if err != nil {
+			return stats, fmt.Errorf("soft-deactivate stale models: %w", err)
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			stats.Deactivated += int(n)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit model sync: %w", err)
+		return stats, fmt.Errorf("commit model sync: %w", err)
 	}
 
-	return nil
+	return stats, nil
 }

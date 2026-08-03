@@ -46,9 +46,12 @@ func NewModelNotAllowedError(requestedName string, allowed []string) *Resolution
 //  5. Return resolved name + backend names from the catalog entry
 func ResolveModel(requestedName string, registry *ModelRegistry, overrides UserOverrides) (resolvedName string, backends []string, err error) {
 	// Step 1: Apply alias mapping if defined for this user.
-	resolvedName = requestedName
+	normalizedRequested := NormalizeModelName(requestedName)
+	resolvedName = normalizedRequested
 	if aliased, exists := overrides.Aliases[requestedName]; exists && aliased != "" {
-		resolvedName = aliased
+		resolvedName = NormalizeModelName(aliased)
+	} else if aliased, exists := overrides.Aliases[normalizedRequested]; exists && aliased != "" {
+		resolvedName = NormalizeModelName(aliased)
 	}
 
 	// Step 2: Look up in global catalog (after aliasing).
@@ -59,7 +62,7 @@ func ResolveModel(requestedName string, registry *ModelRegistry, overrides UserO
 
 	// Step 3: Check deny list — always applies even with no allow list.
 	for _, denied := range overrides.DenyList {
-		if denied == resolvedName {
+		if NormalizeModelName(denied) == resolvedName {
 			return "", nil, NewModelDeniedError(requestedName)
 		}
 	}
@@ -67,7 +70,7 @@ func ResolveModel(requestedName string, registry *ModelRegistry, overrides UserO
 	// Step 4: Check allow list — if non-empty, model must be in it.
 	if len(overrides.AllowList) > 0 {
 		for _, allowed := range overrides.AllowList {
-			if allowed == resolvedName {
+			if NormalizeModelName(allowed) == resolvedName {
 				return resolvedName, entry.Backends, nil
 			}
 		}
@@ -82,30 +85,30 @@ func ResolveModel(requestedName string, registry *ModelRegistry, overrides UserO
 // allow/deny/aliases. Used for /api/tags filtering and dashboard display.
 func (r *ModelRegistry) VisibleModelsFor(overrides UserOverrides) []string {
 	visible := make([]string, 0)
+	denySet := make(map[string]struct{}, len(overrides.DenyList))
+	for _, d := range overrides.DenyList {
+		dn := NormalizeModelName(d)
+		if dn != "" {
+			denySet[dn] = struct{}{}
+		}
+	}
+	allowSet := make(map[string]struct{}, len(overrides.AllowList))
+	for _, a := range overrides.AllowList {
+		an := NormalizeModelName(a)
+		if an != "" {
+			allowSet[an] = struct{}{}
+		}
+	}
 
 	for name, entry := range r.models {
 		// Check deny list — always applies.
-		denied := false
-		for _, d := range overrides.DenyList {
-			if d == name {
-				denied = true
-				break
-			}
-		}
-		if denied {
+		if _, denied := denySet[name]; denied {
 			continue
 		}
 
 		// Check allow list — if non-empty, model must be in it.
-		if len(overrides.AllowList) > 0 {
-			allowed := false
-			for _, a := range overrides.AllowList {
-				if a == name {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
+		if len(allowSet) > 0 {
+			if _, allowed := allowSet[name]; !allowed {
 				continue
 			}
 		}

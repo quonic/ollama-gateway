@@ -41,8 +41,12 @@ func TestModelStore_SyncAndLoadActiveCatalog(t *testing.T) {
 		},
 	}
 
-	if err := store.SyncDiscoveredCatalog(discovered); err != nil {
+	syncStats, err := store.SyncDiscoveredCatalog(discovered)
+	if err != nil {
 		t.Fatalf("sync discovered catalog: %v", err)
+	}
+	if syncStats.Added != 2 || syncStats.Updated != 0 || syncStats.Deactivated != 0 {
+		t.Fatalf("unexpected initial sync stats: %+v", syncStats)
 	}
 
 	loaded, err := store.LoadActiveCatalog()
@@ -79,8 +83,12 @@ func TestModelStore_SoftDeactivateAndPreserveDisplayName(t *testing.T) {
 			Backends: []config.ModelBackendRef{{Backend: "b1", Weight: 1}},
 		},
 	}
-	if err := store.SyncDiscoveredCatalog(initial); err != nil {
+	initialStats, err := store.SyncDiscoveredCatalog(initial)
+	if err != nil {
 		t.Fatalf("initial sync: %v", err)
+	}
+	if initialStats.Added != 2 {
+		t.Fatalf("expected 2 added models on initial sync, got %+v", initialStats)
 	}
 
 	if _, err := usageStore.DB().Exec(`UPDATE models SET display_name = 'Llama Three' WHERE name = 'llama3'`); err != nil {
@@ -93,8 +101,12 @@ func TestModelStore_SoftDeactivateAndPreserveDisplayName(t *testing.T) {
 			Backends: []config.ModelBackendRef{{Backend: "b2", Weight: 4}},
 		},
 	}
-	if err := store.SyncDiscoveredCatalog(update); err != nil {
+	updateStats, err := store.SyncDiscoveredCatalog(update)
+	if err != nil {
 		t.Fatalf("update sync: %v", err)
+	}
+	if updateStats.Deactivated != 1 {
+		t.Fatalf("expected 1 deactivated model, got %+v", updateStats)
 	}
 
 	loaded, err := store.LoadActiveCatalog()
@@ -155,6 +167,28 @@ func TestDiscoverCatalogFromBackends(t *testing.T) {
 	}
 	if len(catalog["llama3"].Backends) != 2 {
 		t.Fatalf("expected llama3 on two backends, got %d", len(catalog["llama3"].Backends))
+	}
+}
+
+func TestDiscoverCatalogFromBackends_NormalizesLatestSuffix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{{"name": "Llama3:latest"}, {"name": "llama3"}},
+		})
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{Backends: []config.Backend{{Name: "a", URL: server.URL, Weight: 1}}}
+
+	catalog, err := DiscoverCatalogFromBackends(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("discover catalog: %v", err)
+	}
+	if len(catalog) != 1 {
+		t.Fatalf("expected normalized merge into one model, got %d", len(catalog))
+	}
+	if _, ok := catalog["llama3"]; !ok {
+		t.Fatalf("expected normalized key llama3 in catalog")
 	}
 }
 

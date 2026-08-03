@@ -9,13 +9,15 @@ import (
 
 // LoaderOptions controls how LoadWithFlags behaves.
 type LoaderOptions struct {
-	ConfigFile string
+	ConfigFile       string
+	SeedModelCatalog bool
 }
 
 // RegisterFlags registers command-line flags into the provided FlagSet
 // and returns an options struct that captures their values.
 func RegisterFlags(fs *flag.FlagSet, opts *LoaderOptions) {
 	fs.StringVar(&opts.ConfigFile, "config", "", "path to YAML config file")
+	fs.BoolVar(&opts.SeedModelCatalog, "seed-model-catalog", false, "seed DB model catalog once from YAML models if DB catalog is empty")
 }
 
 // ResolveConfigPath chooses the config path to use.

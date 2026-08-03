@@ -13,22 +13,36 @@ import (
 	"ollama-gateway/internal/config"
 )
 
+// DiscoveryStats captures startup discovery outcomes across backends.
+type DiscoveryStats struct {
+	SuccessfulBackends int
+	FailedBackends     int
+}
+
 // DiscoverCatalogFromBackends calls each configured backend /api/tags endpoint and
 // builds a merged model catalog suitable for resolver and DB sync.
 func DiscoverCatalogFromBackends(ctx context.Context, cfg *config.Config) (map[string]config.ModelEntry, error) {
+	catalog, _, err := DiscoverCatalogFromBackendsWithStats(ctx, cfg)
+	return catalog, err
+}
+
+// DiscoverCatalogFromBackendsWithStats calls each configured backend /api/tags endpoint,
+// returns the merged normalized catalog, discovery stats, and aggregated errors for failures.
+func DiscoverCatalogFromBackendsWithStats(ctx context.Context, cfg *config.Config) (map[string]config.ModelEntry, DiscoveryStats, error) {
 	client := &http.Client{Timeout: 8 * time.Second}
 	catalog := make(map[string]config.ModelEntry)
+	stats := DiscoveryStats{}
 
 	var errs []error
-	successes := 0
 
 	for _, b := range cfg.Backends {
 		models, err := discoverBackendModels(ctx, client, b)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("backend %q discovery failed: %w", b.Name, err))
+			stats.FailedBackends++
 			continue
 		}
-		successes++
+		stats.SuccessfulBackends++
 
 		weight := b.Weight
 		if weight <= 0 {
@@ -36,10 +50,15 @@ func DiscoverCatalogFromBackends(ctx context.Context, cfg *config.Config) (map[s
 		}
 
 		for _, modelName := range models {
-			entry, ok := catalog[modelName]
+			normalized := NormalizeModelName(modelName)
+			if normalized == "" {
+				continue
+			}
+
+			entry, ok := catalog[normalized]
 			if !ok {
 				entry = config.ModelEntry{
-					Name:     modelName,
+					Name:     normalized,
 					Backends: make([]config.ModelBackendRef, 0, 1),
 				}
 			}
@@ -57,22 +76,22 @@ func DiscoverCatalogFromBackends(ctx context.Context, cfg *config.Config) (map[s
 					Weight:  weight,
 				})
 			}
-			catalog[modelName] = entry
+			catalog[normalized] = entry
 		}
 	}
 
-	if successes == 0 {
+	if stats.SuccessfulBackends == 0 {
 		if len(errs) == 0 {
-			return catalog, fmt.Errorf("model discovery failed: no backends configured")
+			return catalog, stats, fmt.Errorf("model discovery failed: no backends configured")
 		}
-		return catalog, fmt.Errorf("model discovery failed for all backends: %w", errors.Join(errs...))
+		return catalog, stats, fmt.Errorf("model discovery failed for all backends: %w", errors.Join(errs...))
 	}
 
 	if len(errs) > 0 {
-		return catalog, fmt.Errorf("model discovery partially failed: %w", errors.Join(errs...))
+		return catalog, stats, fmt.Errorf("model discovery partially failed: %w", errors.Join(errs...))
 	}
 
-	return catalog, nil
+	return catalog, stats, nil
 }
 
 type tagsResponse struct {

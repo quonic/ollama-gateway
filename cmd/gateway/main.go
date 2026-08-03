@@ -55,7 +55,7 @@ func main() {
 		"default_burst", cfg.RateLimit.DefaultBurst,
 		"ttl", cfg.RateLimit.TTL)
 
-	activeCatalog := models.CatalogFromConfig(cfg)
+	activeCatalog := map[string]config.ModelEntry{}
 
 	// Phase 4: Usage tracking setup and DB-backed model catalog storage
 	var (
@@ -72,31 +72,68 @@ func main() {
 		defer dbStore.Close()
 
 		modelStore = models.NewStore(dbStore.DB())
+		syncStats := models.SyncStats{}
+		discoveryFailures := 0
+		dbCatalog, err := modelStore.LoadActiveCatalog()
+		if err != nil {
+			logger.Warn("failed to load active model catalog from database before sync", "error", err)
+		} else {
+			activeCatalog = dbCatalog
+		}
+
+		if opts.SeedModelCatalog && len(activeCatalog) == 0 && len(cfg.Models.Models) > 0 {
+			seedCatalog := models.NormalizeCatalog(models.CatalogFromConfig(cfg))
+			seedStats, seedErr := modelStore.SyncDiscoveredCatalog(seedCatalog)
+			if seedErr != nil {
+				logger.Warn("model seed from YAML failed", "error", seedErr)
+			} else {
+				logger.Info("model catalog seeded from YAML",
+					"added", seedStats.Added,
+					"updated", seedStats.Updated,
+					"deactivated", seedStats.Deactivated,
+				)
+				if reloaded, reloadErr := modelStore.LoadActiveCatalog(); reloadErr == nil {
+					activeCatalog = reloaded
+				}
+			}
+		}
 
 		discoveryCtx, cancelDiscovery := context.WithTimeout(context.Background(), 20*time.Second)
-		discoveredCatalog, discoverErr := models.DiscoverCatalogFromBackends(discoveryCtx, cfg)
+		discoveredCatalog, discoveryStats, discoverErr := models.DiscoverCatalogFromBackendsWithStats(discoveryCtx, cfg)
 		cancelDiscovery()
+		discoveryFailures = discoveryStats.FailedBackends
 
 		if discoverErr != nil {
 			logger.Warn("model discovery had issues", "error", discoverErr)
 		}
 
 		if discoverErr == nil || len(discoveredCatalog) > 0 {
-			if err := modelStore.SyncDiscoveredCatalog(discoveredCatalog); err != nil {
-				logger.Warn("model sync failed; continuing with cached database state", "error", err)
+			syncedStats, syncErr := modelStore.SyncDiscoveredCatalog(discoveredCatalog)
+			if syncErr != nil {
+				logger.Warn("model sync failed; continuing with cached database state", "error", syncErr)
 			} else {
-				logger.Info("model sync completed", "discovered_models", len(discoveredCatalog))
+				syncStats = syncedStats
 			}
 		}
 
-		dbCatalog, err := modelStore.LoadActiveCatalog()
-		if err != nil {
-			logger.Warn("failed to load active model catalog from database; using config fallback", "error", err)
-		} else if len(dbCatalog) == 0 {
-			logger.Warn("database model catalog is empty; using config fallback")
+		reloadedCatalog, reloadErr := modelStore.LoadActiveCatalog()
+		if reloadErr != nil {
+			logger.Warn("failed to reload active model catalog from database after sync", "error", reloadErr)
 		} else {
-			activeCatalog = dbCatalog
+			activeCatalog = reloadedCatalog
 		}
+
+		if len(activeCatalog) == 0 {
+			fmt.Fprintf(os.Stderr, "model catalog error: no active models found in database after discovery/sync\n")
+			os.Exit(1)
+		}
+
+		logger.Info("model startup sync metrics",
+			"added", syncStats.Added,
+			"updated", syncStats.Updated,
+			"deactivated", syncStats.Deactivated,
+			"discovery_failures", discoveryFailures,
+		)
 
 		pricingCfg := &usage.PricingConfig{
 			DefaultInputPer1M:  cfg.Pricing.DefaultInputPer1M,
@@ -113,7 +150,8 @@ func main() {
 		usageLogger = usage.NewUsageLogger(dbStore, usage.DefaultLoggerOptions())
 		logger.Info("usage logger initialized", "database", cfg.Database.Path)
 	} else {
-		logger.Warn("no database path configured; usage tracking disabled")
+		fmt.Fprintf(os.Stderr, "config error: database.path is required for DB-backed model catalog runtime\n")
+		os.Exit(1)
 	}
 
 	// Phase 5: Model registry & backend routing setup
