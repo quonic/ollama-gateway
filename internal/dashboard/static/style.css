@@ -265,6 +265,16 @@ body.modal-open {
 	color: var(--disabled-ink);
 }
 
+.pill.warning {
+	background: #fff0cf;
+	color: #8a5a00;
+}
+
+.pill.expired {
+	background: #ffd9d6;
+	color: #8e2112;
+}
+
 .inline-action {
 	color: var(--accent-strong);
 	text-decoration: none;

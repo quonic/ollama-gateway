@@ -28,8 +28,24 @@ type Manager struct {
 
 	mu             sync.RWMutex
 	cert           *tls.Certificate
+	lastReloadAt   time.Time
+	expiresAt      time.Time
 	fingerprint    [sha256.Size]byte
 	hasFingerprint bool
+}
+
+// Status is a snapshot of current TLS certificate runtime state.
+type Status struct {
+	CertPath      string
+	KeyPath       string
+	CheckInterval time.Duration
+	WarningDays   int
+	Loaded        bool
+	LastReloadAt  time.Time
+	ExpiresAt     time.Time
+	DaysRemaining int
+	Expired       bool
+	ExpiringSoon  bool
 }
 
 func NewManager(certPath, keyPath string, checkInterval time.Duration, warningDays int, logger *slog.Logger) *Manager {
@@ -81,6 +97,30 @@ func (m *Manager) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error)
 	return m.cert, nil
 }
 
+func (m *Manager) Status() Status {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	status := Status{
+		CertPath:      m.certPath,
+		KeyPath:       m.keyPath,
+		CheckInterval: m.checkInterval,
+		WarningDays:   m.warningDays,
+	}
+	if m.cert == nil || m.cert.Leaf == nil {
+		return status
+	}
+
+	daysRemaining := daysUntilExpiry(m.cert.Leaf.NotAfter)
+	status.Loaded = true
+	status.LastReloadAt = m.lastReloadAt
+	status.ExpiresAt = m.expiresAt
+	status.DaysRemaining = daysRemaining
+	status.Expired = time.Now().After(m.expiresAt)
+	status.ExpiringSoon = !status.Expired && daysRemaining <= m.warningDays
+	return status
+}
+
 func (m *Manager) reloadIfChanged(force bool) error {
 	certPEM, err := os.ReadFile(m.certPath)
 	if err != nil {
@@ -115,6 +155,8 @@ func (m *Manager) reloadIfChanged(force bool) error {
 	m.mu.Lock()
 	hadCert := m.cert != nil
 	m.cert = &pair
+	m.lastReloadAt = time.Now().UTC()
+	m.expiresAt = leaf.NotAfter
 	m.fingerprint = fingerprint
 	m.hasFingerprint = true
 	m.mu.Unlock()

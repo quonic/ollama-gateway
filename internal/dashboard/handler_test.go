@@ -1,9 +1,16 @@
 package dashboard
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,6 +21,7 @@ import (
 	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/models"
+	"ollama-gateway/internal/tlsruntime"
 	"ollama-gateway/internal/usage"
 )
 
@@ -74,6 +82,62 @@ func TestDashboardLoginFlow(t *testing.T) {
 	}
 }
 
+func TestOverviewShowsTLSStatusCard(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "tls-cert.pem")
+	keyPath := filepath.Join(tempDir, "tls-key.pem")
+	certPEM, keyPEM := dashboardTestCertPairPEM(t, time.Now().Add(21*24*time.Hour), big.NewInt(91))
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			TLSCertPath:      certPath,
+			TLSKeyPath:       keyPath,
+			TLSCheckInterval: time.Hour,
+		},
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	mgr := tlsruntime.NewManager(certPath, keyPath, time.Hour, 30, nil)
+	if err := mgr.LoadInitial(); err != nil {
+		t.Fatalf("load initial cert: %v", err)
+	}
+	handler.SetTLSManager(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected overview page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "TLS Certificate") {
+		t.Fatalf("expected TLS certificate card, got %q", body)
+	}
+	if !strings.Contains(body, "Expires At") || !strings.Contains(body, "Last Reload") {
+		t.Fatalf("expected expiry and reload fields, got %q", body)
+	}
+}
+
 func TestBackendToggle(t *testing.T) {
 	cfg := &config.Config{
 		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
@@ -105,6 +169,36 @@ func TestBackendToggle(t *testing.T) {
 	if !strings.Contains(resp.Body.String(), "disabled") {
 		t.Fatalf("expected disabled status in body, got %q", resp.Body.String())
 	}
+}
+
+func dashboardTestCertPairPEM(t *testing.T, notAfter time.Time, serial *big.Int) ([]byte, []byte) {
+	t.Helper()
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey: %v", err)
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+		DNSNames: []string{"localhost"},
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate: %v", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+	return certPEM, keyPEM
 }
 
 func TestBackendToggle_PostRedirectsBackToBackendsPage(t *testing.T) {

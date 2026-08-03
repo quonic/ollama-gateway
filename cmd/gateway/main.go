@@ -238,6 +238,7 @@ func main() {
 		os.Exit(1)
 	}
 	dashboardHandler.SetManager(resolver.Manager())
+	dashboardHandler.SetTLSManager(certManager)
 	dashboardHandler.SetModelCatalog(activeCatalog)
 	dashboardHandler.SetModelRuntimeRefreshers(
 		resolver.RefreshCatalog,

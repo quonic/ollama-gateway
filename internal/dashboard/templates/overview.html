@@ -13,6 +13,39 @@
     <p class="metric">{{ .UserCount }}</p>
   </div>
 </div>
+{{ if .TLSStatus }}
+<div class="card">
+  <h3>TLS Certificate</h3>
+  <ul class="stack-list">
+    <li>
+      <strong>Status</strong>
+      <span class="pill {{ index .TLSStatus "StatusClass" }}">{{ index .TLSStatus "StatusLabel" }}</span>
+    </li>
+    <li>
+      <strong>Certificate Path</strong>
+      <span class="list-meta mono">{{ index .TLSStatus "CertPath" }}</span>
+    </li>
+    {{ if index .TLSStatus "Loaded" }}
+    <li>
+      <strong>Expires At</strong>
+      <span class="list-meta mono">{{ index .TLSStatus "ExpiresAt" }}</span>
+    </li>
+    <li>
+      <strong>Days Remaining</strong>
+      <span class="list-meta">{{ index .TLSStatus "DaysRemaining" }}</span>
+    </li>
+    <li>
+      <strong>Last Reload</strong>
+      <span class="list-meta mono">{{ index .TLSStatus "LastReloadAt" }}</span>
+    </li>
+    {{ end }}
+    <li>
+      <strong>Check Interval</strong>
+      <span class="list-meta mono">{{ index .TLSStatus "CheckInterval" }}</span>
+    </li>
+  </ul>
+</div>
+{{ end }}
 {{ if .Summary }}
 <div class="cards">
   <div class="card">

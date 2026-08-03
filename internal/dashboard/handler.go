@@ -19,6 +19,7 @@ import (
 	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/models"
+	"ollama-gateway/internal/tlsruntime"
 	"ollama-gateway/internal/usage"
 )
 
@@ -32,6 +33,7 @@ type Handler struct {
 	templates    *template.Template
 	state        *state
 	manager      *backends.Manager
+	tlsManager   *tlsruntime.Manager
 	models       map[string]config.ModelEntry
 	modelStore   *models.Store
 	backendStore *backends.Store
@@ -81,6 +83,10 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 
 func (h *Handler) SetManager(manager *backends.Manager) {
 	h.manager = manager
+}
+
+func (h *Handler) SetTLSManager(manager *tlsruntime.Manager) {
+	h.tlsManager = manager
 }
 
 func (h *Handler) SetModelCatalog(catalog map[string]config.ModelEntry) {
@@ -221,6 +227,7 @@ func (h *Handler) renderLogin(w http.ResponseWriter, r *http.Request, invalid bo
 func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 	models := h.currentModelCatalog()
 	users := h.usersSnapshot()
+	tlsEnabled := strings.TrimSpace(h.cfg.Server.TLSCertPath) != "" && strings.TrimSpace(h.cfg.Server.TLSKeyPath) != ""
 	data := map[string]any{
 		"Title":            "Overview",
 		"Subtitle":         "Live snapshot of gateway capacity, spend, and backend health.",
@@ -231,6 +238,36 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 		"UserCount":        len(users),
 		"Backends":         h.cfg.Backends,
 		"DisabledBackends": h.state.disabledBackends,
+	}
+	if tlsEnabled {
+		tlsStatus := map[string]any{
+			"Enabled":       true,
+			"CertPath":      h.cfg.Server.TLSCertPath,
+			"CheckInterval": h.cfg.Server.TLSCheckInterval.String(),
+			"StatusLabel":   "unavailable",
+			"StatusClass":   "disabled",
+		}
+		if h.tlsManager != nil {
+			status := h.tlsManager.Status()
+			tlsStatus["Loaded"] = status.Loaded
+			tlsStatus["CheckInterval"] = status.CheckInterval.String()
+			if status.Loaded {
+				tlsStatus["ExpiresAt"] = status.ExpiresAt.Format(time.RFC3339)
+				tlsStatus["LastReloadAt"] = status.LastReloadAt.Format(time.RFC3339)
+				tlsStatus["DaysRemaining"] = status.DaysRemaining
+				tlsStatus["StatusLabel"] = "healthy"
+				tlsStatus["StatusClass"] = "healthy"
+				if status.ExpiringSoon {
+					tlsStatus["StatusLabel"] = "expiring"
+					tlsStatus["StatusClass"] = "warning"
+				}
+				if status.Expired {
+					tlsStatus["StatusLabel"] = "expired"
+					tlsStatus["StatusClass"] = "expired"
+				}
+			}
+		}
+		data["TLSStatus"] = tlsStatus
 	}
 	if h.usageStore != nil {
 		summary, err := h.loadOverviewSummary()
