@@ -133,6 +133,7 @@ func main() {
 			"updated", syncStats.Updated,
 			"deactivated", syncStats.Deactivated,
 			"discovery_failures", discoveryFailures,
+			"total_active_models_loaded", len(activeCatalog),
 		)
 
 		pricingCfg := &usage.PricingConfig{
