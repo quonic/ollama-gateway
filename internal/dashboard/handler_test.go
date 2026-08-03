@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -240,6 +241,97 @@ func TestCreateUserWorkflow(t *testing.T) {
 	}
 	if _, ok := cfg.Users["analytics-team"]; !ok {
 		t.Fatalf("expected newly created user to be persisted in store")
+	}
+}
+
+func TestUpdateAndRotateUserWorkflow(t *testing.T) {
+	cfg := &config.Config{
+		RateLimit: config.RateLimitingConfig{DefaultRate: 10, DefaultBurst: 50, TTL: 1},
+		Admin:     config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends:  []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models:    config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}}}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	loginForm := url.Values{}
+	loginForm.Set("token", "super-secret")
+	loginReq := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(loginForm.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginResp := httptest.NewRecorder()
+	handler.ServeHTTP(loginResp, loginReq)
+	cookie := loginResp.Result().Cookies()[0]
+
+	updateForm := url.Values{}
+	updateForm.Set("action", "update")
+	updateForm.Set("user_name", "demo")
+	updateForm.Set("model_allow", "llama3.2, qwen2.5")
+	updateForm.Set("model_deny", "phi3")
+	updateForm.Set("aliases", "chat:llama3.2,coder:qwen2.5")
+	updateForm.Set("rate_limit_enabled", "on")
+	updateForm.Set("rate_limit_rate", "25.5")
+	updateForm.Set("rate_limit_burst", "77")
+	updateForm.Set("rate_limit_ttl_seconds", "900")
+
+	updateReq := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(updateForm.Encode()))
+	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	updateReq.AddCookie(cookie)
+	updateResp := httptest.NewRecorder()
+	handler.ServeHTTP(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("expected update user page, got %d", updateResp.Code)
+	}
+	updateBody := updateResp.Body.String()
+	if !strings.Contains(updateBody, "updated") {
+		t.Fatalf("expected update success message, got %q", updateBody)
+	}
+
+	uc := cfg.Users["demo"]
+	if uc.RateLimit == nil || uc.RateLimit.Burst != 77 {
+		t.Fatalf("expected updated rate limit burst 77, got %#v", uc.RateLimit)
+	}
+	if uc.Aliases["chat"] != "llama3.2" {
+		t.Fatalf("expected alias chat -> llama3.2, got %#v", uc.Aliases)
+	}
+
+	oldHash := uc.APIKeyHash
+	rotateForm := url.Values{}
+	rotateForm.Set("action", "rotate")
+	rotateForm.Set("user_name", "demo")
+
+	rotateReq := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(rotateForm.Encode()))
+	rotateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rotateReq.AddCookie(cookie)
+	rotateResp := httptest.NewRecorder()
+	handler.ServeHTTP(rotateResp, rotateReq)
+	if rotateResp.Code != http.StatusOK {
+		t.Fatalf("expected rotate user page, got %d", rotateResp.Code)
+	}
+	rotateBody := rotateResp.Body.String()
+	if !strings.Contains(rotateBody, "API key rotated") {
+		t.Fatalf("expected rotate success message, got %q", rotateBody)
+	}
+	if !strings.Contains(rotateBody, "Generated API Key") {
+		t.Fatalf("expected one-time generated key to be shown, got %q", rotateBody)
+	}
+
+	newHash := cfg.Users["demo"].APIKeyHash
+	if newHash == oldHash {
+		t.Fatalf("expected API key hash to change on rotation")
+	}
+	re := regexp.MustCompile(`Raw key:</strong> <span class="mono">([^<]+)</span>`)
+	matches := re.FindStringSubmatch(rotateBody)
+	if len(matches) < 2 {
+		t.Fatalf("expected raw key in response body, got %q", rotateBody)
+	}
+	if _, ok := authStore.LookupAPIKey(matches[1]); !ok {
+		t.Fatalf("expected rotated key to authenticate")
 	}
 }
 

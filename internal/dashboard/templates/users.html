@@ -11,6 +11,57 @@
       placeholder="team-analytics"
       required
     />
+
+    <label for="create_model_allow">Model allow list (comma separated)</label>
+    <input
+      id="create_model_allow"
+      name="model_allow"
+      type="text"
+      placeholder="llama3.2, qwen2.5"
+    />
+
+    <label for="create_model_deny">Model deny list (comma separated)</label>
+    <input
+      id="create_model_deny"
+      name="model_deny"
+      type="text"
+      placeholder="phi3"
+    />
+
+    <label for="create_aliases">Aliases (alias:model, comma separated)</label>
+    <input
+      id="create_aliases"
+      name="aliases"
+      type="text"
+      placeholder="chat:llama3.2, coder:qwen2.5"
+    />
+
+    <label>
+      <input type="checkbox" name="rate_limit_enabled" />
+      Set custom rate limit for this user
+    </label>
+    <label for="create_rate_limit_rate">Rate (tokens/sec)</label>
+    <input
+      id="create_rate_limit_rate"
+      name="rate_limit_rate"
+      type="text"
+      placeholder="10.0"
+    />
+    <label for="create_rate_limit_burst">Burst</label>
+    <input
+      id="create_rate_limit_burst"
+      name="rate_limit_burst"
+      type="text"
+      placeholder="50"
+    />
+    <label for="create_rate_limit_ttl_seconds">Bucket TTL (seconds)</label>
+    <input
+      id="create_rate_limit_ttl_seconds"
+      name="rate_limit_ttl_seconds"
+      type="text"
+      placeholder="3600"
+    />
+
     <button type="submit">Create User and Key</button>
   </form>
   {{ if .FormError }}
@@ -40,16 +91,96 @@
 </div>
 <div class="card">
   <h3>Configured API Users</h3>
-  <ul class="stack-list">
-    {{ range $id, $user := .Users }}
-    <li>
-      <strong class="mono">{{ $id }}</strong>
-      <span class="list-meta"
-        >{{ if ne $user.APIKeyHash "" }}hash configured{{ else }}no hash{{ end
-        }}</span
-      >
-    </li>
-    {{ end }}
-  </ul>
+  {{ range $user := .Users }}
+  <div class="generated-key" style="margin-bottom: 12px">
+    <h4 class="mono">{{ $user.ID }}</h4>
+    <p class="hint">
+      {{ if ne $user.Config.APIKeyHash "" }}hash configured{{ else }}no hash{{
+      end }}
+    </p>
+
+    <form
+      method="post"
+      action="/admin/users"
+      class="inline-form"
+      style="margin-top: 10px"
+    >
+      <input type="hidden" name="action" value="update" />
+      <input type="hidden" name="user_name" value="{{ $user.ID }}" />
+
+      <label for="allow_{{ $user.ID }}">Model allow list</label>
+      <input
+        id="allow_{{ $user.ID }}"
+        name="model_allow"
+        type="text"
+        value="{{ $user.AllowText }}"
+      />
+
+      <label for="deny_{{ $user.ID }}">Model deny list</label>
+      <input
+        id="deny_{{ $user.ID }}"
+        name="model_deny"
+        type="text"
+        value="{{ $user.DenyText }}"
+      />
+
+      <label for="aliases_{{ $user.ID }}">Aliases (alias:model)</label>
+      <input
+        id="aliases_{{ $user.ID }}"
+        name="aliases"
+        type="text"
+        value="{{ $user.AliasText }}"
+      />
+
+      <label>
+        <input
+          type="checkbox"
+          name="rate_limit_enabled"
+          {{
+          if
+          $user.Config.RateLimit
+          }}checked{{
+          end
+          }}
+        />
+        Custom rate limit enabled
+      </label>
+      <label for="rate_{{ $user.ID }}">Rate (tokens/sec)</label>
+      <input
+        id="rate_{{ $user.ID }}"
+        name="rate_limit_rate"
+        type="text"
+        value="{{ $user.Rate }}"
+      />
+      <label for="burst_{{ $user.ID }}">Burst</label>
+      <input
+        id="burst_{{ $user.ID }}"
+        name="rate_limit_burst"
+        type="text"
+        value="{{ $user.Burst }}"
+      />
+      <label for="ttl_{{ $user.ID }}">Bucket TTL (seconds)</label>
+      <input
+        id="ttl_{{ $user.ID }}"
+        name="rate_limit_ttl_seconds"
+        type="text"
+        value="{{ $user.TTLSeconds }}"
+      />
+
+      <button type="submit">Save User Settings</button>
+    </form>
+
+    <form
+      method="post"
+      action="/admin/users"
+      class="inline-form"
+      style="margin-top: 8px"
+    >
+      <input type="hidden" name="action" value="rotate" />
+      <input type="hidden" name="user_name" value="{{ $user.ID }}" />
+      <button type="submit">Rotate API Key</button>
+    </form>
+  </div>
+  {{ end }}
 </div>
 {{ end }} {{ define "users.html" }}{{ template "layout.html" . }}{{ end }}

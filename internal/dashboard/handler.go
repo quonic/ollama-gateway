@@ -1,15 +1,19 @@
 package dashboard
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
 	"mime"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/backends"
@@ -251,12 +255,29 @@ func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generatedHash, formError, formSuccess string) {
 	users := h.usersSnapshot()
+	viewUsers := make([]map[string]any, 0, len(users))
+	for id, uc := range users {
+		viewUsers = append(viewUsers, map[string]any{
+			"ID":         id,
+			"Config":     uc,
+			"AllowText":  strings.Join(uc.ModelAllow, ", "),
+			"DenyText":   strings.Join(uc.ModelDeny, ", "),
+			"AliasText":  formatAliases(uc.Aliases),
+			"Rate":       userRateOrDefault(uc.RateLimit, h.cfg.RateLimit.DefaultRate),
+			"Burst":      userBurstOrDefault(uc.RateLimit, h.cfg.RateLimit.DefaultBurst),
+			"TTLSeconds": userTTLOrDefaultSeconds(uc.RateLimit, h.cfg.RateLimit.TTL),
+		})
+	}
+	sort.Slice(viewUsers, func(i, j int) bool {
+		return viewUsers[i]["ID"].(string) < viewUsers[j]["ID"].(string)
+	})
+
 	data := map[string]any{
 		"Title":            "Users",
 		"Subtitle":         "Create users, generate API keys, and audit active identities.",
 		"Active":           "users",
 		"ContentBlock":     "content-users",
-		"Users":            users,
+		"Users":            viewUsers,
 		"DisabledBackends": h.state.disabledBackends,
 		"GeneratedKey":     generatedKey,
 		"GeneratedHash":    generatedHash,
@@ -361,6 +382,52 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 		h.renderUsersPage(w, rawKey, hash, "", "")
 		return
 	}
+
+	if action == "rotate" {
+		userName := strings.TrimSpace(r.FormValue("user_name"))
+		if userName == "" {
+			h.renderUsersPage(w, "", "", "User name is required for key rotation.", "")
+			return
+		}
+		rawKey := generateAPIKey()
+		rotatedRaw, rotatedHash, err := h.authStore.RotateUserKey(userName, rawKey)
+		if err != nil {
+			if errors.Is(err, auth.ErrUserNotFound) {
+				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q not found.", userName), "")
+				return
+			}
+			h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to rotate key for user %q: %v", userName, err), "")
+			return
+		}
+		h.renderUsersPage(w, rotatedRaw, rotatedHash, "", fmt.Sprintf("API key rotated for user %q.", userName))
+		return
+	}
+
+	if action == "update" {
+		userName := strings.TrimSpace(r.FormValue("user_name"))
+		if userName == "" {
+			h.renderUsersPage(w, "", "", "User name is required for updates.", "")
+			return
+		}
+
+		uc, err := h.buildUserConfigFromForm(r)
+		if err != nil {
+			h.renderUsersPage(w, "", "", fmt.Sprintf("Invalid user settings for %q: %v", userName, err), "")
+			return
+		}
+		if err := h.authStore.UpdateUser(userName, uc); err != nil {
+			if errors.Is(err, auth.ErrUserNotFound) {
+				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q not found.", userName), "")
+				return
+			}
+			h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to update user %q: %v", userName, err), "")
+			return
+		}
+
+		h.renderUsersPage(w, "", "", "", fmt.Sprintf("User %q updated.", userName))
+		return
+	}
+
 	if action != "create" {
 		h.renderUsers(w, r)
 		return
@@ -374,7 +441,13 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 
 	rawKey := generateAPIKey()
 	hash := auth.HashAPIKey(rawKey)
-	if err := h.authStore.CreateUser(userName, config.UserConfig{APIKeyHash: hash}); err != nil {
+	uc, err := h.buildUserConfigFromForm(r)
+	if err != nil {
+		h.renderUsersPage(w, "", "", fmt.Sprintf("Invalid user settings for %q: %v", userName, err), "")
+		return
+	}
+	uc.APIKeyHash = hash
+	if err := h.authStore.CreateUser(userName, uc); err != nil {
 		if errors.Is(err, auth.ErrUserExists) {
 			h.renderUsersPage(w, "", "", fmt.Sprintf("User %q already exists.", userName), "")
 			return
@@ -384,6 +457,137 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderUsersPage(w, rawKey, hash, "", fmt.Sprintf("User %q created.", userName))
+}
+
+func (h *Handler) buildUserConfigFromForm(r *http.Request) (config.UserConfig, error) {
+	allow, err := splitCSV(r.FormValue("model_allow"))
+	if err != nil {
+		return config.UserConfig{}, err
+	}
+	deny, err := splitCSV(r.FormValue("model_deny"))
+	if err != nil {
+		return config.UserConfig{}, err
+	}
+	aliases, err := parseAliases(r.FormValue("aliases"))
+	if err != nil {
+		return config.UserConfig{}, err
+	}
+
+	rateLimitEnabled := strings.EqualFold(strings.TrimSpace(r.FormValue("rate_limit_enabled")), "on")
+	var rl *config.RateLimitCfg
+	if rateLimitEnabled {
+		rate, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("rate_limit_rate")), 64)
+		if err != nil || rate <= 0 {
+			return config.UserConfig{}, fmt.Errorf("rate limit rate must be a positive number")
+		}
+		burst, err := strconv.Atoi(strings.TrimSpace(r.FormValue("rate_limit_burst")))
+		if err != nil || burst <= 0 {
+			return config.UserConfig{}, fmt.Errorf("rate limit burst must be a positive integer")
+		}
+		ttlSeconds, err := strconv.Atoi(strings.TrimSpace(r.FormValue("rate_limit_ttl_seconds")))
+		if err != nil || ttlSeconds <= 0 {
+			return config.UserConfig{}, fmt.Errorf("rate limit TTL seconds must be a positive integer")
+		}
+		rl = &config.RateLimitCfg{
+			Rate:  rate,
+			Burst: burst,
+			TTL:   time.Duration(ttlSeconds) * time.Second,
+		}
+	}
+
+	return config.UserConfig{
+		RateLimit:  rl,
+		ModelAllow: allow,
+		ModelDeny:  deny,
+		Aliases:    aliases,
+	}, nil
+}
+
+func splitCSV(input string) ([]string, error) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return []string{}, nil
+	}
+	parts := strings.Split(trimmed, ",")
+	result := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func parseAliases(input string) (map[string]string, error) {
+	aliases := map[string]string{}
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return aliases, nil
+	}
+	entries := strings.Split(trimmed, ",")
+	for _, entry := range entries {
+		item := strings.TrimSpace(entry)
+		if item == "" {
+			continue
+		}
+		parts := strings.SplitN(item, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("alias entry %q must use alias:model format", item)
+		}
+		alias := strings.TrimSpace(parts[0])
+		model := strings.TrimSpace(parts[1])
+		if alias == "" || model == "" {
+			return nil, fmt.Errorf("alias entry %q must include both alias and model", item)
+		}
+		aliases[alias] = model
+	}
+	return aliases, nil
+}
+
+func formatAliases(aliases map[string]string) string {
+	if len(aliases) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(aliases))
+	for k := range aliases {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	items := make([]string, 0, len(keys))
+	for _, k := range keys {
+		items = append(items, k+":"+aliases[k])
+	}
+	return strings.Join(items, ", ")
+}
+
+func userRateOrDefault(rl *config.RateLimitCfg, defaultRate float64) float64 {
+	if rl != nil && rl.Rate > 0 {
+		return rl.Rate
+	}
+	return defaultRate
+}
+
+func userBurstOrDefault(rl *config.RateLimitCfg, defaultBurst int) int {
+	if rl != nil && rl.Burst > 0 {
+		return rl.Burst
+	}
+	return defaultBurst
+}
+
+func userTTLOrDefaultSeconds(rl *config.RateLimitCfg, defaultTTL time.Duration) int {
+	if rl != nil && rl.TTL > 0 {
+		return int(rl.TTL / time.Second)
+	}
+	if defaultTTL <= 0 {
+		return 0
+	}
+	return int(defaultTTL / time.Second)
 }
 
 func (h *Handler) usersSnapshot() map[string]config.UserConfig {
@@ -464,12 +668,11 @@ func (h *Handler) loadOverviewSummary() (map[string]any, error) {
 }
 
 func generateAPIKey() string {
-	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 32)
-	for i := range b {
-		b[i] = alphabet[i%len(alphabet)]
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
 	}
-	return string(b)
+	return hex.EncodeToString(b)
 }
 
 func formatCost(v any) string {

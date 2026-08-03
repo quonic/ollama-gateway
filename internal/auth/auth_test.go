@@ -2,9 +2,11 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"ollama-gateway/internal/config"
 )
@@ -234,5 +236,57 @@ func TestAdminMiddleware_ValidToken(t *testing.T) {
 	}
 	if !handlerCalled {
 		t.Error("downstream handler should have been called")
+	}
+}
+
+func TestStoreUpdateUserAndRotateKey(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	updated := config.UserConfig{
+		RateLimit:  &config.RateLimitCfg{Rate: 25.5, Burst: 120, TTL: 90 * time.Second},
+		ModelAllow: []string{"llama3.2", "qwen2.5"},
+		ModelDeny:  []string{"phi3"},
+		Aliases:    map[string]string{"chat": "llama3.2"},
+	}
+	if err := s.UpdateUser("user-alice", updated); err != nil {
+		t.Fatalf("update user: %v", err)
+	}
+
+	uc, ok := s.GetUserConfig("user-alice")
+	if !ok {
+		t.Fatalf("expected updated user to exist")
+	}
+	if uc.RateLimit == nil || uc.RateLimit.Burst != 120 {
+		t.Fatalf("expected updated burst=120, got %#v", uc.RateLimit)
+	}
+	if len(uc.ModelAllow) != 2 || uc.Aliases["chat"] != "llama3.2" {
+		t.Fatalf("expected updated model policy, got %#v", uc)
+	}
+
+	raw, hash, err := s.RotateUserKey("user-alice", "new-key-abc")
+	if err != nil {
+		t.Fatalf("rotate key: %v", err)
+	}
+	if raw != "new-key-abc" {
+		t.Fatalf("expected raw key to echo input")
+	}
+	if hash == "" || !VerifyAPIKeyHash(hash, "new-key-abc") {
+		t.Fatalf("expected valid rotated hash")
+	}
+	if _, ok := s.LookupAPIKey("new-key-abc"); !ok {
+		t.Fatalf("expected rotated key to authenticate")
+	}
+}
+
+func TestStoreUpdateUser_NotFound(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+	err := s.UpdateUser("missing-user", config.UserConfig{})
+	if err == nil {
+		t.Fatal("expected not found error")
+	}
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
 	}
 }

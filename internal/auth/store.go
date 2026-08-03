@@ -18,6 +18,7 @@ type Store struct {
 }
 
 var ErrUserExists = errors.New("user already exists")
+var ErrUserNotFound = errors.New("user not found")
 
 // NewStore creates an auth store backed by the given config and optional database.
 // When db is nil, auth state is read from YAML config only.
@@ -243,6 +244,122 @@ func (s *Store) CreateUser(userID string, uc config.UserConfig) error {
 		return err
 	}
 	return nil
+}
+
+// UpdateUser updates an existing user's policy configuration and optionally key hash.
+func (s *Store) UpdateUser(userID string, uc config.UserConfig) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return fmt.Errorf("user name is required")
+	}
+
+	if s.db == nil {
+		existing, ok := s.cfg.Users[userID]
+		if !ok {
+			return ErrUserNotFound
+		}
+		if uc.APIKeyHash == "" {
+			uc.APIKeyHash = existing.APIKeyHash
+		}
+		s.cfg.Users[userID] = uc
+		return nil
+	}
+
+	existing, ok := s.GetUserConfig(userID)
+	if !ok {
+		return ErrUserNotFound
+	}
+	if uc.APIKeyHash == "" {
+		uc.APIKeyHash = existing.APIKeyHash
+	}
+
+	allowJSON, denyJSON, aliasesJSON, err := marshalUserFields(uc)
+	if err != nil {
+		return err
+	}
+
+	var (
+		rateArg  any
+		burstArg any
+		ttlArg   any
+	)
+	if uc.RateLimit != nil {
+		if uc.RateLimit.Rate > 0 {
+			rateArg = uc.RateLimit.Rate
+		}
+		if uc.RateLimit.Burst > 0 {
+			burstArg = uc.RateLimit.Burst
+		}
+		if uc.RateLimit.TTL > 0 {
+			ttlArg = int64(uc.RateLimit.TTL.Seconds())
+		}
+	}
+
+	res, err := s.db.Exec(`
+		UPDATE api_users
+		SET api_key_hash = ?,
+		    rate_limit_rate = ?,
+		    rate_limit_burst = ?,
+		    rate_limit_ttl_seconds = ?,
+		    model_allow_json = ?,
+		    model_deny_json = ?,
+		    aliases_json = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = ?
+	`, uc.APIKeyHash, rateArg, burstArg, ttlArg, allowJSON, denyJSON, aliasesJSON, userID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// RotateUserKey generates and persists a new API key hash for an existing user.
+// It returns the raw key and hash so callers can display the one-time secret.
+func (s *Store) RotateUserKey(userID string, rawKey string) (string, string, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return "", "", fmt.Errorf("user name is required")
+	}
+	if rawKey == "" {
+		return "", "", fmt.Errorf("raw key is required")
+	}
+
+	hash := HashAPIKey(rawKey)
+
+	if s.db == nil {
+		uc, ok := s.cfg.Users[userID]
+		if !ok {
+			return "", "", ErrUserNotFound
+		}
+		uc.APIKeyHash = hash
+		s.cfg.Users[userID] = uc
+		return rawKey, hash, nil
+	}
+
+	res, err := s.db.Exec(`
+		UPDATE api_users
+		SET api_key_hash = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = ?
+	`, hash, userID)
+	if err != nil {
+		return "", "", err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return "", "", err
+	}
+	if affected == 0 {
+		return "", "", ErrUserNotFound
+	}
+
+	return rawKey, hash, nil
 }
 
 func marshalUserFields(uc config.UserConfig) (allowJSON, denyJSON, aliasesJSON string, err error) {
