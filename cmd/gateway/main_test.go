@@ -51,6 +51,10 @@ func TestServerMux_HandlesAuthRateLimitAndProxyFlow(t *testing.T) {
 		RateLimit:   config.RateLimitingConfig{DefaultRate: 10, DefaultBurst: 50, TTL: time.Hour},
 		HealthCheck: config.HealthCheckConfig{IntervalSeconds: 1, TimeoutSeconds: 1, UnhealthyThreshold: 1},
 		Database:    config.DatabaseConfig{Path: tempDir + "/usage.db"},
+		Pricing: config.PricingConfig{
+			DefaultInputPer1M:  0.4,
+			DefaultOutputPer1M: 0.8,
+		},
 	}
 
 	authStore := auth.NewStore(cfg)
@@ -64,6 +68,10 @@ func TestServerMux_HandlesAuthRateLimitAndProxyFlow(t *testing.T) {
 	}
 	usageLogger := usage.NewUsageLogger(store, usage.LoggerOptions{BufferSize: 16, BatchSize: 1, FlushInterval: time.Hour})
 	proxyHandler := proxy.NewProxyHandler(resolver, usageLogger, authStore)
+	proxyHandler.SetPricingConfig(&usage.PricingConfig{
+		DefaultInputPer1M:  0.4,
+		DefaultOutputPer1M: 0.8,
+	})
 	dashboardHandler, err := dashboard.NewHandler(cfg, authStore, store, nil)
 	if err != nil {
 		t.Fatalf("new dashboard handler: %v", err)
@@ -137,6 +145,13 @@ func TestServerMux_HandlesAuthRateLimitAndProxyFlow(t *testing.T) {
 	}
 	if upstreamCalls != 1 {
 		t.Fatalf("expected 1 upstream call after successful proxy request, got %d", upstreamCalls)
+	}
+	var cost float64
+	if err := store.DB().QueryRow("SELECT cost_usd FROM usage_records").Scan(&cost); err != nil {
+		t.Fatalf("read usage cost: %v", err)
+	}
+	if cost <= 0 {
+		t.Fatalf("expected positive cost, got %.8f", cost)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close usage store: %v", err)

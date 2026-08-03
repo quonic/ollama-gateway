@@ -98,6 +98,18 @@ func main() {
 
 	// Phase 5: Reverse proxy handler setup.
 	proxyHandler := proxy.NewProxyHandler(resolver, usageLogger, authStore)
+	pricingCfg := &usage.PricingConfig{
+		DefaultInputPer1M:  cfg.Pricing.DefaultInputPer1M,
+		DefaultOutputPer1M: cfg.Pricing.DefaultOutputPer1M,
+		ModelPricing:       make(map[string]usage.ModelPricing),
+	}
+	for modelName, mp := range cfg.Pricing.Models {
+		pricingCfg.ModelPricing[modelName] = usage.ModelPricing{
+			InputCostPer1M:  mp.InputCostPer1M,
+			OutputCostPer1M: mp.OutputCostPer1M,
+		}
+	}
+	proxyHandler.SetPricingConfig(pricingCfg)
 
 	// Start health checker in background.
 	ctx := context.Background()

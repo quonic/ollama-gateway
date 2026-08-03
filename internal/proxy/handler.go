@@ -25,12 +25,18 @@ type ProxyHandler struct {
 	resolver  *models.Resolver
 	logger    *usage.UsageLogger
 	authStore *auth.Store
+	pricing   *usage.PricingConfig
 }
 
 // NewProxyHandler creates a new ProxyHandler from the given model resolver (which wraps both
 // the model registry and backend manager), an async usage logger, and an auth store for user-specific overrides.
 func NewProxyHandler(resolver *models.Resolver, logger *usage.UsageLogger, authStore *auth.Store) *ProxyHandler {
 	return &ProxyHandler{resolver: resolver, logger: logger, authStore: authStore}
+}
+
+// SetPricingConfig attaches pricing rules so usage logging can calculate request cost.
+func (h *ProxyHandler) SetPricingConfig(cfg *usage.PricingConfig) {
+	h.pricing = cfg
 }
 
 // ServeHTTP is the main entry point for all proxied /api/* requests.
@@ -321,6 +327,11 @@ func (h *ProxyHandler) logUsage(ctx context.Context, apiKeyID string, backendURL
 		stats = sri.stats()
 	}
 
+	costUSD := 0.0
+	if h.pricing != nil {
+		costUSD = h.pricing.CalculateCost(modelName, stats.PromptTokens, stats.EvalTokens)
+	}
+
 	h.logger.Log(usage.UsageRecord{
 		Timestamp:        usage.NowISO(),
 		APIKeyID:         apiKeyID,
@@ -329,6 +340,7 @@ func (h *ProxyHandler) logUsage(ctx context.Context, apiKeyID string, backendURL
 		PromptTokens:     stats.PromptTokens,
 		CompletionTokens: stats.EvalTokens,
 		DurationMS:       durationMS,
+		CostUSD:          costUSD,
 	})
 }
 
