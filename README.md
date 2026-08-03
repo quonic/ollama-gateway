@@ -1,7 +1,8 @@
 # Ollama Gateway
 
-A Go-based HTTP gateway that sits between users and one or more backend Ollama servers. It proxies
-the Ollama REST API (`/api/generate`, `/api/chat`, `/api/embed`, etc.) while adding:
+A gateway for Ollama servers, with a web admin control panel. Share your inference with your friends!
+
+Featuring:
 
 - **API key authentication** (SHA-256 hashing) with separate admin token for dashboard access
 - **Token-bucket rate limiting** per API key (burst-friendly, configurable rate/burst)
@@ -46,6 +47,8 @@ cp configs/config.example.yaml configs/config.yaml
 # Run
 ./bin/gateway --config configs/config.yaml
 ```
+
+Admin dashboard is available at `http://localhost:4080/admin/` (or `https://` if TLS is configured). Use the admin token hash from the YAML to log in.
 
 The gateway listens on `0.0.0.0:4080` by default (configurable in the YAML).
 
