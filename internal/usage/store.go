@@ -120,6 +120,51 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// OverviewSummary returns aggregate usage totals for the dashboard overview.
+type OverviewSummary struct {
+	Requests         int
+	PromptTokens     int64
+	CompletionTokens int64
+	Cost             float64
+}
+
+// ModelCostBreakdown returns per-model request counts and total cost for the dashboard.
+type ModelCostBreakdown struct {
+	Model string
+	Count int
+	Cost  float64
+}
+
+// OverviewSummary returns aggregate usage totals for the dashboard overview.
+func (s *Store) OverviewSummary() (OverviewSummary, error) {
+	var summary OverviewSummary
+	err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0) FROM usage_records`).Scan(&summary.Requests, &summary.PromptTokens, &summary.CompletionTokens, &summary.Cost)
+	return summary, err
+}
+
+// ModelCostBreakdown returns per-model request counts and total cost for the dashboard.
+func (s *Store) ModelCostBreakdown(limit int) ([]ModelCostBreakdown, error) {
+	rows, err := s.db.Query(`SELECT model, COUNT(*), COALESCE(SUM(cost_usd),0) FROM usage_records GROUP BY model ORDER BY SUM(cost_usd) DESC, model LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var breakdown []ModelCostBreakdown
+	for rows.Next() {
+		var item ModelCostBreakdown
+		if err := rows.Scan(&item.Model, &item.Count, &item.Cost); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		breakdown = append(breakdown, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return breakdown, nil
+}
+
 // NowISO returns the current time as an ISO 8601 UTC string suitable for storage in usage_records.timestamp.
 func NowISO() string {
 	return time.Now().UTC().Format(time.RFC3339)

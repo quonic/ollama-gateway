@@ -349,21 +349,20 @@ func (h *Handler) loadOverviewSummary() (map[string]any, error) {
 	if h.usageStore == nil {
 		return nil, fmt.Errorf("usage store not configured")
 	}
-	type summaryRow struct {
-		Requests         int
-		PromptTokens     int64
-		CompletionTokens int64
-		Cost             float64
+	summary, err := h.usageStore.OverviewSummary()
+	if err != nil {
+		return nil, err
 	}
-	var row summaryRow
-	if err := h.usageStore.DB().QueryRow(`SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0) FROM usage_records`).Scan(&row.Requests, &row.PromptTokens, &row.CompletionTokens, &row.Cost); err != nil {
+	breakdown, err := h.usageStore.ModelCostBreakdown(10)
+	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"requests":         row.Requests,
-		"promptTokens":     row.PromptTokens,
-		"completionTokens": row.CompletionTokens,
-		"cost":             row.Cost,
+		"requests":         summary.Requests,
+		"promptTokens":     summary.PromptTokens,
+		"completionTokens": summary.CompletionTokens,
+		"cost":             summary.Cost,
+		"modelBreakdown":   breakdown,
 	}, nil
 }
 

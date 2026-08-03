@@ -32,6 +32,17 @@
     <p class="metric">{{ formatCost (index .Summary "cost") }}</p>
   </div>
 </div>
+<div class="card">
+  <h3>Per-Model Cost</h3>
+  <ul class="stack-list">
+    {{ range (index .Summary "modelBreakdown") }}
+    <li>
+      <strong>{{ .Model }}</strong>
+      <span>{{ .Count }} requests · {{ formatCost .Cost }}</span>
+    </li>
+    {{ end }}
+  </ul>
+</div>
 {{ end }}
 <div class="card">
   <h3>Backend Status</h3>
