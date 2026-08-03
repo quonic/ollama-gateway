@@ -62,10 +62,30 @@
         let activeModal = null;
         let lastTrigger = null;
 
-        const focusModal = (modal) => {
-          const firstFocusable = modal.querySelector(
-            'input, button, select, textarea, [tabindex]:not([tabindex="-1"])'
+        const focusableSelector =
+          'a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), iframe, object, embed, [contenteditable], [tabindex]:not([tabindex="-1"])';
+
+        const isVisible = (element) => {
+          return !!(
+            element.offsetWidth ||
+            element.offsetHeight ||
+            element.getClientRects().length
           );
+        };
+
+        const getFocusableElements = (modal) => {
+          return Array.from(modal.querySelectorAll(focusableSelector)).filter(
+            (el) => isVisible(el)
+          );
+        };
+
+        const focusModal = (modal) => {
+          const modalCard = modal.querySelector(".modal-card");
+          const focusable = getFocusableElements(modal);
+          const firstFocusable = focusable[0] || modalCard;
+          if (modalCard && !modalCard.hasAttribute("tabindex")) {
+            modalCard.setAttribute("tabindex", "-1");
+          }
           if (firstFocusable) {
             firstFocusable.focus();
           }
@@ -123,6 +143,35 @@
         document.addEventListener("keydown", (event) => {
           if (event.key === "Escape" && activeModal) {
             closeModal(activeModal);
+            return;
+          }
+
+          if (event.key === "Tab" && activeModal) {
+            const focusable = getFocusableElements(activeModal);
+            const modalCard = activeModal.querySelector(".modal-card");
+
+            if (focusable.length === 0) {
+              event.preventDefault();
+              if (modalCard) {
+                modalCard.focus();
+              }
+              return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const current = document.activeElement;
+
+            if (event.shiftKey && (current === first || !activeModal.contains(current))) {
+              event.preventDefault();
+              last.focus();
+              return;
+            }
+
+            if (!event.shiftKey && current === last) {
+              event.preventDefault();
+              first.focus();
+            }
           }
         });
       })();
