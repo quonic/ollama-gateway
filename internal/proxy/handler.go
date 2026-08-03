@@ -68,7 +68,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine whether this is a streaming /api/generate request so we can wrap the response writer.
+	// Only wrap the response writer for true streaming /api/generate requests.
+	// Non-streaming /api/generate and /api/chat responses are handled through ModifyResponse
+	// so we can capture token counts without interfering with the body stream.
 	isStreamingGenerate := h.isStreamingGenerate(r)
 
 	var sri *streamingResponseInterceptor
@@ -76,9 +78,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sri = newStreamingResponseInterceptor(w)
 		w = sri // ReverseProxy will call our wrapper's Write/Flush, which intercepts and forwards
 	} else if strings.HasPrefix(r.URL.Path, "/api/generate") || strings.HasPrefix(r.URL.Path, "/api/chat") {
-		// For non-streaming /api/generate or /api/chat, still wrap so modifyResponse can store stats.
 		sri = newStreamingResponseInterceptor(w)
-		w = sri
 	}
 
 	// Step 4: Build and run the reverse proxy.

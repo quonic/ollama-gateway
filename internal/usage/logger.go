@@ -2,6 +2,7 @@ package usage
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,10 @@ type UsageLogger struct {
 
 	batchSize     int
 	flushInterval time.Duration
+
+	stopCh    chan struct{}
+	doneCh    chan struct{}
+	closeOnce sync.Once
 
 	log *slog.Logger
 }
@@ -53,6 +58,8 @@ func NewUsageLogger(store *Store, opts LoggerOptions) *UsageLogger {
 		batchCh:       make(chan []UsageRecord, 16),
 		batchSize:     opts.BatchSize,
 		flushInterval: opts.FlushInterval,
+		stopCh:        make(chan struct{}),
+		doneCh:        make(chan struct{}),
 		log:           slog.Default(),
 	}
 
@@ -85,6 +92,8 @@ func (ul *UsageLogger) Log(record UsageRecord) {
 
 // run is the background goroutine that batches records and flushes them periodically.
 func (ul *UsageLogger) run() {
+	defer close(ul.doneCh)
+
 	ticker := time.NewTicker(ul.flushInterval)
 	defer ticker.Stop()
 
@@ -101,6 +110,20 @@ func (ul *UsageLogger) run() {
 
 	for {
 		select {
+		case <-ul.stopCh:
+			flush()
+			for {
+				select {
+				case rec := <-ul.ch:
+					batch = append(batch, rec)
+					if len(batch) >= ul.batchSize {
+						flush()
+					}
+				default:
+					flush()
+					return
+				}
+			}
 		case rec := <-ul.ch:
 			batch = append(batch, rec)
 			if len(batch) >= ul.batchSize {
@@ -114,32 +137,12 @@ func (ul *UsageLogger) run() {
 
 // Shutdown signals the logger to flush any remaining records and stop. Call during graceful shutdown.
 func (ul *UsageLogger) Shutdown(ctxDone <-chan struct{}) {
-	// Drain channel one last time, flushing in batches until empty or context done.
-	for {
-		select {
-		case rec := <-ul.ch:
-			batch := []UsageRecord{rec}
-			// Try to pull more records for a final batch.
-			for i := 1; i < ul.batchSize; i++ {
-				select {
-				case r := <-ul.ch:
-					batch = append(batch, r)
-				default:
-					goto flushFinal
-				}
-			}
-		flushFinal:
-			if err := ul.store.BatchInsert(batch); err != nil {
-				ul.log.Error("final batch insert failed", "error", err, "records_dropped", len(batch))
-			}
-		default:
-			return // channel empty — done
-		}
+	ul.closeOnce.Do(func() {
+		close(ul.stopCh)
+	})
 
-		select {
-		case <-ctxDone:
-			return // shutdown context cancelled
-		default:
-		}
+	select {
+	case <-ul.doneCh:
+	case <-ctxDone:
 	}
 }
