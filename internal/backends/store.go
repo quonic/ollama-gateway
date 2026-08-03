@@ -103,26 +103,24 @@ ON CONFLICT(name) DO UPDATE SET
 }
 
 func (s *Store) DeactivateBackend(name string) error {
+	return s.RemoveBackend(name)
+}
+
+// RemoveBackend permanently deletes a backend row.
+func (s *Store) RemoveBackend(name string) error {
 	res, err := s.db.Exec(`
-UPDATE backend_configs
-SET active = 0, updated_at = CURRENT_TIMESTAMP
-WHERE name = ? AND active <> 0
+DELETE FROM backend_configs
+WHERE name = ?
 `, name)
 	if err != nil {
-		return fmt.Errorf("deactivate backend %q: %w", name, err)
+		return fmt.Errorf("remove backend %q: %w", name, err)
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
 	if affected == 0 {
-		var exists int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM backend_configs WHERE name = ?`, name).Scan(&exists); err != nil {
-			return err
-		}
-		if exists == 0 {
-			return ErrBackendNotFound
-		}
+		return ErrBackendNotFound
 	}
 	return nil
 }

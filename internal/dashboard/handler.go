@@ -323,10 +323,10 @@ func (h *Handler) renderModelsPage(w http.ResponseWriter, formError, formSuccess
 }
 
 func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
-	h.renderBackendsPage(w, "", "")
+	h.renderBackendsPage(w, "", "", "")
 }
 
-func (h *Handler) renderBackendsPage(w http.ResponseWriter, formError, formSuccess string) {
+func (h *Handler) renderBackendsPage(w http.ResponseWriter, formError, formSuccess, pendingRemove string) {
 	viewBackends := make([]config.Backend, len(h.cfg.Backends))
 	copy(viewBackends, h.cfg.Backends)
 	sort.Slice(viewBackends, func(i, j int) bool {
@@ -335,13 +335,14 @@ func (h *Handler) renderBackendsPage(w http.ResponseWriter, formError, formSucce
 
 	data := map[string]any{
 		"Title":            "Backends",
-		"Subtitle":         "Create, edit, and deactivate backend targets without restarting the service.",
+		"Subtitle":         "Create, edit, and remove backend targets without restarting the service.",
 		"Active":           "backends",
 		"ContentBlock":     "content-backends",
 		"Backends":         viewBackends,
 		"DisabledBackends": h.state.disabledBackends,
 		"FormError":        formError,
 		"FormSuccess":      formSuccess,
+		"PendingRemove":    pendingRemove,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "backends.html", data); err != nil {
@@ -482,45 +483,63 @@ func (h *Handler) handleBackendAction(w http.ResponseWriter, r *http.Request) {
 	action := strings.TrimSpace(r.FormValue("action"))
 	name := strings.TrimSpace(r.FormValue("backend_name"))
 	if name == "" {
-		h.renderBackendsPage(w, "Backend name is required.", "")
+		h.renderBackendsPage(w, "Backend name is required.", "", "")
 		return
 	}
 
-	if action == "deactivate" {
+	if action == "remove-intent" {
+		if _, exists := h.backendByName(name); !exists {
+			h.renderBackendsPage(w, fmt.Sprintf("Backend %q not found.", name), "", "")
+			return
+		}
 		blockingModels := h.modelsReferencingBackend(name)
 		if len(blockingModels) > 0 {
-			h.renderBackendsPage(w, fmt.Sprintf("Cannot deactivate backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "")
+			h.renderBackendsPage(w, fmt.Sprintf("Cannot remove backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "", "")
 			return
 		}
-		if err := h.deactivateBackend(name); err != nil {
-			h.renderBackendsPage(w, fmt.Sprintf("Failed to deactivate backend %q: %v", name, err), "")
+		h.renderBackendsPage(w, "", fmt.Sprintf("Confirm removal for backend %q.", name), name)
+		return
+	}
+
+	if action == "remove-confirm" {
+		if strings.TrimSpace(r.FormValue("confirm_backend_name")) != name {
+			h.renderBackendsPage(w, "Confirmation name does not match backend name.", "", name)
 			return
 		}
-		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q deactivated.", name))
+		blockingModels := h.modelsReferencingBackend(name)
+		if len(blockingModels) > 0 {
+			h.renderBackendsPage(w, fmt.Sprintf("Cannot remove backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "", "")
+			return
+		}
+		if err := h.removeBackend(name); err != nil {
+			h.renderBackendsPage(w, fmt.Sprintf("Failed to remove backend %q: %v", name, err), "", "")
+			return
+		}
+		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q removed.", name), "")
 		return
 	}
 
 	backendCfg, err := h.buildBackendConfigFromForm(r)
 	if err != nil {
-		h.renderBackendsPage(w, fmt.Sprintf("Invalid backend settings for %q: %v", name, err), "")
+		h.renderBackendsPage(w, fmt.Sprintf("Invalid backend settings for %q: %v", name, err), "", "")
 		return
 	}
 
 	switch action {
 	case "create":
 		if err := h.createBackend(backendCfg); err != nil {
-			h.renderBackendsPage(w, fmt.Sprintf("Failed to create backend %q: %v", name, err), "")
+			h.renderBackendsPage(w, fmt.Sprintf("Failed to create backend %q: %v", name, err), "", "")
 			return
 		}
-		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q created.", name))
+		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q created.", name), "")
 	case "update":
 		if err := h.updateBackend(backendCfg); err != nil {
-			h.renderBackendsPage(w, fmt.Sprintf("Failed to update backend %q: %v", name, err), "")
+			h.renderBackendsPage(w, fmt.Sprintf("Failed to update backend %q: %v", name, err), "", "")
 			return
 		}
-		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q updated.", name))
+		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q updated.", name), "")
 	default:
-		h.renderBackendsPage(w, "Unknown backend action.", "")
+		h.renderBackendsPage(w, "Unknown backend action.", "", "")
 	}
 }
 
@@ -600,9 +619,9 @@ func (h *Handler) updateBackend(backendCfg config.Backend) error {
 	return h.reloadBackendsFromStoreIfAvailable()
 }
 
-func (h *Handler) deactivateBackend(name string) error {
+func (h *Handler) removeBackend(name string) error {
 	if h.backendStore != nil {
-		if err := h.backendStore.DeactivateBackend(name); err != nil {
+		if err := h.backendStore.RemoveBackend(name); err != nil {
 			if errors.Is(err, backends.ErrBackendNotFound) {
 				return fmt.Errorf("backend not found")
 			}
@@ -610,7 +629,7 @@ func (h *Handler) deactivateBackend(name string) error {
 		}
 	}
 	if h.manager != nil {
-		if err := h.manager.DeactivateBackend(name); err != nil {
+		if err := h.manager.RemoveBackend(name); err != nil {
 			if errors.Is(err, backends.ErrBackendNotFound) {
 				return fmt.Errorf("backend not found")
 			}

@@ -2,8 +2,8 @@
 <div class="card">
   <h3>Backend Controls</h3>
   <p class="hint">
-    Create, tune, or deactivate backends. Deactivation is blocked when models
-    still reference the backend.
+    Create, tune, or remove backends. Removal is blocked when models still
+    reference the backend.
   </p>
   {{ if .FormError }}
   <p class="hint" style="color: #b91c1c"><strong>{{ .FormError }}</strong></p>
@@ -84,8 +84,7 @@
     <p class="hint">URL: {{ .URL }}</p>
     <p class="hint">
       Status: {{ if index $.DisabledBackends .Name }}disabled{{ else }}enabled{{
-      end }}
-      ·
+      end }} ·
       <a class="inline-action" href="/admin/backends/toggle/{{ .Name }}"
         >toggle drain state</a
       >
@@ -143,17 +142,40 @@
       <button type="submit">Save Backend Settings</button>
     </form>
 
+    {{ if eq $.PendingRemove .Name }}
     <form
       method="post"
       action="/admin/backends"
       class="inline-form"
       style="margin-top: 8px"
-      onsubmit="return confirm('Deactivate backend {{ .Name }}? This is blocked if any active model still references it.')"
     >
-      <input type="hidden" name="action" value="deactivate" />
+      <input type="hidden" name="action" value="remove-confirm" />
       <input type="hidden" name="backend_name" value="{{ .Name }}" />
-      <button type="submit">Deactivate Backend</button>
+      <label for="confirm_{{ .Name }}"
+        >Type <span class="mono">{{ .Name }}</span> to confirm hard
+        removal</label
+      >
+      <input
+        id="confirm_{{ .Name }}"
+        name="confirm_backend_name"
+        type="text"
+        placeholder="{{ .Name }}"
+        required
+      />
+      <button type="submit">Confirm Remove Backend</button>
     </form>
+    {{ else }}
+    <form
+      method="post"
+      action="/admin/backends"
+      class="inline-form"
+      style="margin-top: 8px"
+    >
+      <input type="hidden" name="action" value="remove-intent" />
+      <input type="hidden" name="backend_name" value="{{ .Name }}" />
+      <button type="submit">Remove Backend</button>
+    </form>
+    {{ end }}
   </div>
   {{ end }}
 </div>

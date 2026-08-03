@@ -7,7 +7,7 @@ import (
 	"ollama-gateway/internal/config"
 )
 
-func TestManager_UpsertAndDeactivateBackend(t *testing.T) {
+func TestManager_UpsertAndRemoveBackend(t *testing.T) {
 	cfg := &config.Config{
 		Backends: []config.Backend{{
 			Name:            "local",
@@ -58,10 +58,18 @@ func TestManager_UpsertAndDeactivateBackend(t *testing.T) {
 		t.Fatalf("expected edge backend updated, got %#v", edge)
 	}
 
-	if err := mgr.DeactivateBackend("edge"); err != nil {
-		t.Fatalf("deactivate backend: %v", err)
+	if err := mgr.RemoveBackend("edge"); err != nil {
+		t.Fatalf("remove backend: %v", err)
 	}
-	if edge.IsEnabled() {
-		t.Fatalf("expected backend disabled after deactivation")
+	if _, ok := mgr.GetByName("edge"); ok {
+		t.Fatalf("expected backend removed from lookup map")
+	}
+	for _, b := range mgr.Backends() {
+		if b.Name == "edge" {
+			t.Fatalf("expected backend removed from manager slice")
+		}
+	}
+	if err := mgr.RemoveBackend("edge"); err == nil {
+		t.Fatalf("expected removing missing backend to fail")
 	}
 }

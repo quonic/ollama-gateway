@@ -153,12 +153,25 @@ func (m *Manager) UpsertBackend(cfg config.Backend) error {
 
 // DeactivateBackend disables routing to a backend while keeping its record for future activation.
 func (m *Manager) DeactivateBackend(name string) error {
+	return m.RemoveBackend(name)
+}
+
+// RemoveBackend removes a backend from runtime routing state.
+func (m *Manager) RemoveBackend(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	b, ok := m.byName[name]
+	_, ok := m.byName[name]
 	if !ok {
 		return ErrBackendNotFound
 	}
-	b.SetEnabled(false)
+	delete(m.byName, name)
+	filtered := make([]*Backend, 0, len(m.backends))
+	for _, b := range m.backends {
+		if b.Name == name {
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+	m.backends = filtered
 	return nil
 }

@@ -725,7 +725,7 @@ func TestModelMutationPersistsAndRefreshesRuntime(t *testing.T) {
 	}
 }
 
-func TestBackendCreateUpdateDeactivatePersists(t *testing.T) {
+func TestBackendCreateUpdateRemovePersists(t *testing.T) {
 	dir := t.TempDir()
 	usageStore, err := usage.NewStore(filepath.Join(dir, "dashboard-backend-persist.db"))
 	if err != nil {
@@ -823,29 +823,49 @@ func TestBackendCreateUpdateDeactivatePersists(t *testing.T) {
 		t.Fatalf("expected runtime backend updated, got %#v", edge)
 	}
 
-	deactivate := url.Values{}
-	deactivate.Set("action", "deactivate")
-	deactivate.Set("backend_name", "edge")
+	removeIntent := url.Values{}
+	removeIntent.Set("action", "remove-intent")
+	removeIntent.Set("backend_name", "edge")
 
-	deactivateReq := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(deactivate.Encode()))
-	deactivateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	deactivateReq.Header.Set("X-Admin-Token", "super-secret")
-	deactivateResp := httptest.NewRecorder()
-	handler.ServeHTTP(deactivateResp, deactivateReq)
-	if deactivateResp.Code != http.StatusOK {
-		t.Fatalf("expected backend deactivate page, got %d", deactivateResp.Code)
+	removeIntentReq := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(removeIntent.Encode()))
+	removeIntentReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	removeIntentReq.Header.Set("X-Admin-Token", "super-secret")
+	removeIntentResp := httptest.NewRecorder()
+	handler.ServeHTTP(removeIntentResp, removeIntentReq)
+	if removeIntentResp.Code != http.StatusOK {
+		t.Fatalf("expected backend remove-intent page, got %d", removeIntentResp.Code)
+	}
+	if !strings.Contains(removeIntentResp.Body.String(), "Confirm removal") {
+		t.Fatalf("expected remove confirmation prompt, got %q", removeIntentResp.Body.String())
+	}
+
+	removeConfirm := url.Values{}
+	removeConfirm.Set("action", "remove-confirm")
+	removeConfirm.Set("backend_name", "edge")
+	removeConfirm.Set("confirm_backend_name", "edge")
+
+	removeConfirmReq := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(removeConfirm.Encode()))
+	removeConfirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	removeConfirmReq.Header.Set("X-Admin-Token", "super-secret")
+	removeConfirmResp := httptest.NewRecorder()
+	handler.ServeHTTP(removeConfirmResp, removeConfirmReq)
+	if removeConfirmResp.Code != http.StatusOK {
+		t.Fatalf("expected backend remove-confirm page, got %d", removeConfirmResp.Code)
 	}
 
 	loaded, err = backendStore.LoadActiveBackends()
 	if err != nil {
-		t.Fatalf("load backends after deactivate: %v", err)
+		t.Fatalf("load backends after remove: %v", err)
 	}
 	if len(loaded) != 1 || loaded[0].Name != "local" {
-		t.Fatalf("expected only local active after deactivate, got %#v", loaded)
+		t.Fatalf("expected only local active after remove, got %#v", loaded)
+	}
+	if _, ok := manager.GetByName("edge"); ok {
+		t.Fatalf("expected runtime manager backend removed")
 	}
 }
 
-func TestBackendDeactivateBlockedWhenModelReferencesBackend(t *testing.T) {
+func TestBackendRemoveBlockedWhenModelReferencesBackend(t *testing.T) {
 	cfg := &config.Config{
 		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
 		Backends: []config.Backend{{
@@ -867,7 +887,7 @@ func TestBackendDeactivateBlockedWhenModelReferencesBackend(t *testing.T) {
 	}
 
 	form := url.Values{}
-	form.Set("action", "deactivate")
+	form.Set("action", "remove-intent")
 	form.Set("backend_name", "edge")
 	req := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -879,10 +899,50 @@ func TestBackendDeactivateBlockedWhenModelReferencesBackend(t *testing.T) {
 		t.Fatalf("expected backend page response, got %d", resp.Code)
 	}
 	body := resp.Body.String()
-	if !strings.Contains(body, "Cannot deactivate backend") || !strings.Contains(body, "qwen2.5") {
+	if !strings.Contains(body, "Cannot remove backend") || !strings.Contains(body, "qwen2.5") {
 		t.Fatalf("expected model-reference blocker message, got %q", body)
 	}
 	if _, ok := handler.backendByName("edge"); !ok {
 		t.Fatalf("expected backend to remain configured when blocked")
+	}
+}
+
+func TestBackendRemoveConfirmRequiresExactName(t *testing.T) {
+	cfg := &config.Config{
+		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{
+			Name:            "edge",
+			URL:             "http://127.0.0.1:11435",
+			Weight:          1,
+			Timeout:         30 * time.Second,
+			HealthCheckPath: "/api/version",
+		}},
+		Users: map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("action", "remove-confirm")
+	form.Set("backend_name", "edge")
+	form.Set("confirm_backend_name", "EDGE")
+	req := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected backend page response, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Confirmation name does not match") {
+		t.Fatalf("expected confirmation mismatch message, got %q", body)
+	}
+	if _, ok := handler.backendByName("edge"); !ok {
+		t.Fatalf("expected backend to remain configured when confirmation fails")
 	}
 }

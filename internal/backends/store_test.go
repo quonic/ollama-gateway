@@ -18,7 +18,7 @@ func newBackendTestUsageStore(t *testing.T) *usage.Store {
 	return store
 }
 
-func TestBackendStore_SeedUpsertDeactivate(t *testing.T) {
+func TestBackendStore_SeedUpsertRemove(t *testing.T) {
 	usageStore := newBackendTestUsageStore(t)
 	defer usageStore.Close()
 
@@ -64,14 +64,18 @@ func TestBackendStore_SeedUpsertDeactivate(t *testing.T) {
 		t.Fatalf("expected updated backend fields, got %#v", loaded[0])
 	}
 
-	if err := store.DeactivateBackend("local"); err != nil {
-		t.Fatalf("deactivate backend: %v", err)
+	if err := store.RemoveBackend("local"); err != nil {
+		t.Fatalf("remove backend: %v", err)
 	}
 	loaded, err = store.LoadActiveBackends()
 	if err != nil {
-		t.Fatalf("load active backends after deactivate: %v", err)
+		t.Fatalf("load active backends after remove: %v", err)
 	}
 	if len(loaded) != 0 {
-		t.Fatalf("expected no active backends after deactivate, got %#v", loaded)
+		t.Fatalf("expected no active backends after remove, got %#v", loaded)
+	}
+
+	if err := store.RemoveBackend("local"); err == nil {
+		t.Fatalf("expected remove missing backend to fail")
 	}
 }
