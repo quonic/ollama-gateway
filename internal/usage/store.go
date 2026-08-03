@@ -3,6 +3,8 @@ package usage
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,6 +34,12 @@ type Store struct {
 func NewStore(path string) (*Store, error) {
 	if !strings.Contains(path, "://") && !strings.HasSuffix(path, ".db") && !strings.HasSuffix(path, ".sqlite") {
 		path = path + ".db"
+	}
+
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create database directory: %w", err)
+		}
 	}
 
 	db, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_journal_mode=WAL")

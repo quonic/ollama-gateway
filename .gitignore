@@ -1,2 +1,5 @@
 bin/gateway
 configs/config.yaml
+.data/gateway.db
+.data/gateway.db-shm
+.data/gateway.db-wal
