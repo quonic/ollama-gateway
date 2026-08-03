@@ -9,6 +9,7 @@ the Ollama REST API (`/api/generate`, `/api/chat`, `/api/embed`, etc.) while add
 - **Weighted load balancing** across backends with health-check failover
 - **Usage & cost tracking** — token counts, calculated costs per 1M tokens, SQLite persistence
 - **Embedded HTMX admin dashboard** for monitoring and configuration, including user creation
+- **Optional HTTPS listener** with certificate hot reload and expiry warnings
 
 Single-binary deployment using `net/http` + `html/template`. No web framework.
 
@@ -78,6 +79,28 @@ Key sections:
 | `users`    | Optional bootstrap users imported into DB on first startup |
 | `pricing`  | Cost per 1M tokens (prompt/eval) for each model            |
 | `database` | SQLite database path for usage logs and user records       |
+
+### HTTPS / TLS
+
+Configure HTTPS certificate paths in the `server` section:
+
+- `tls_cert_path`
+- `tls_key_path`
+- `tls_check_interval` (optional; default `24h`)
+- `tls_expiry_warning_days` (optional; default `30`)
+
+TLS mode is enabled when both `tls_cert_path` and `tls_key_path` are set.
+
+Linux + Let's Encrypt example paths:
+
+- `/etc/letsencrypt/live/<domain>/fullchain.pem`
+- `/etc/letsencrypt/live/<domain>/privkey.pem`
+
+Runtime behavior:
+
+- New TLS handshakes use updated certificates after the files change; no process restart is required.
+- The gateway periodically checks certificate expiry and logs a warning when the certificate is near expiry.
+- If a certificate is already expired, the gateway logs an error and continues serving with the currently loaded certificate.
 
 ## Admin Dashboard
 

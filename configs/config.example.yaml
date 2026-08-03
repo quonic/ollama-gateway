@@ -5,6 +5,12 @@ server:
   read_timeout: 30s
   write_timeout: 120s
   idle_timeout: 120s
+  # Gateway HTTPS is enabled when both tls_cert_path and tls_key_path are set.
+  # Linux + Let's Encrypt (certbot) default layout:
+  # tls_cert_path: "/etc/letsencrypt/live/example.com/fullchain.pem"
+  # tls_key_path: "/etc/letsencrypt/live/example.com/privkey.pem"
+  # tls_check_interval: 24h
+  # tls_expiry_warning_days: 30
 
 admin:
   # SHA-256 hex of your admin token (e.g., echo -n "my-admin-token" | sha256sum)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"ollama-gateway/internal/models"
 	"ollama-gateway/internal/proxy"
 	"ollama-gateway/internal/ratelimit"
+	"ollama-gateway/internal/tlsruntime"
 	"ollama-gateway/internal/usage"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver for usage tracking database
@@ -195,13 +197,35 @@ func main() {
 	proxyHandler.SetPricingConfig(pricingCfg)
 
 	// Start health checker in background.
-	ctx := context.Background()
+	ctx, stopBackground := context.WithCancel(context.Background())
 	go func() {
 		resolver.Manager().HealthChecker().Run(ctx)
 	}()
 	logger.Info("health checker started",
 		"interval_seconds", cfg.HealthCheck.IntervalSeconds,
 		"timeout_seconds", cfg.HealthCheck.TimeoutSeconds)
+
+	tlsEnabled := cfg.Server.TLSCertPath != "" && cfg.Server.TLSKeyPath != ""
+	var certManager *tlsruntime.Manager
+	if tlsEnabled {
+		certManager = tlsruntime.NewManager(
+			cfg.Server.TLSCertPath,
+			cfg.Server.TLSKeyPath,
+			cfg.Server.TLSCheckInterval,
+			cfg.Server.TLSExpiryWarningDays,
+			logger,
+		)
+		if err := certManager.LoadInitial(); err != nil {
+			fmt.Fprintf(os.Stderr, "TLS certificate error: %v\n", err)
+			os.Exit(1)
+		}
+		go certManager.Run(ctx)
+		logger.Info("TLS certificate watcher started",
+			"cert_path", cfg.Server.TLSCertPath,
+			"check_interval", cfg.Server.TLSCheckInterval,
+			"expiry_warning_days", cfg.Server.TLSExpiryWarningDays,
+		)
+	}
 
 	// Build the HTTP server with auth + rate limit middleware applied to /api/* routes.
 	mux := http.NewServeMux()
@@ -230,8 +254,14 @@ func main() {
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
+	if tlsEnabled {
+		srv.TLSConfig = &tls.Config{
+			MinVersion:     tls.VersionTLS12,
+			GetCertificate: certManager.GetCertificate,
+		}
+	}
 
-	logger.Info("server starting", "listen_addr", cfg.Server.ListenAddr)
+	logger.Info("server starting", "listen_addr", cfg.Server.ListenAddr, "tls_enabled", tlsEnabled)
 
 	// Set up graceful shutdown: on SIGTERM/SIGINT, stop accepting connections,
 	// wait for active requests to complete (30s), then flush usage logger.
@@ -241,6 +271,7 @@ func main() {
 	go func() {
 		sig := <-sigCh
 		logger.Info("received signal; initiating graceful shutdown", "signal", sig.String())
+		stopBackground()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -265,6 +296,14 @@ func main() {
 
 		os.Exit(0)
 	}()
+
+	if tlsEnabled {
+		if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)

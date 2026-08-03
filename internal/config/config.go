@@ -25,10 +25,14 @@ type Config struct {
 
 // ServerConfig controls the HTTP server.
 type ServerConfig struct {
-	ListenAddr   string        `yaml:"listen_addr"`
-	ReadTimeout  time.Duration `yaml:"read_timeout"`
-	WriteTimeout time.Duration `yaml:"write_timeout"`
-	IdleTimeout  time.Duration `yaml:"idle_timeout"`
+	ListenAddr           string        `yaml:"listen_addr"`
+	ReadTimeout          time.Duration `yaml:"read_timeout"`
+	WriteTimeout         time.Duration `yaml:"write_timeout"`
+	IdleTimeout          time.Duration `yaml:"idle_timeout"`
+	TLSCertPath          string        `yaml:"tls_cert_path,omitempty"`
+	TLSKeyPath           string        `yaml:"tls_key_path,omitempty"`
+	TLSCheckInterval     time.Duration `yaml:"tls_check_interval,omitempty"`
+	TLSExpiryWarningDays int           `yaml:"tls_expiry_warning_days,omitempty"`
 }
 
 // AdminConfig holds the admin token hash for /admin/* routes.
@@ -117,12 +121,14 @@ type DatabaseConfig struct {
 // Defaults and validation -----------------------------------------------------
 
 const (
-	defaultListenAddr    = "0.0.0.0:4080"
-	defaultReadTimeout   = 30 * time.Second
-	defaultWriteTimeout  = 120 * time.Second
-	defaultIdleTimeout   = 120 * time.Second
-	defaultBackendWeight = 1
-	defaultBucketTTL     = 1 * time.Hour
+	defaultListenAddr           = "0.0.0.0:4080"
+	defaultReadTimeout          = 30 * time.Second
+	defaultWriteTimeout         = 120 * time.Second
+	defaultIdleTimeout          = 120 * time.Second
+	defaultTLSCheckInterval     = 24 * time.Hour
+	defaultTLSExpiryWarningDays = 30
+	defaultBackendWeight        = 1
+	defaultBucketTTL            = 1 * time.Hour
 	// Global rate limit defaults (applied when not specified in config).
 	defaultRateLimitRate  float64 = 10.0 // tokens/sec refill
 	defaultRateLimitBurst int     = 50   // max burst capacity
@@ -161,6 +167,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Server.IdleTimeout == 0 {
 		cfg.Server.IdleTimeout = defaultIdleTimeout
+	}
+	if cfg.Server.TLSCheckInterval <= 0 {
+		cfg.Server.TLSCheckInterval = defaultTLSCheckInterval
+	}
+	if cfg.Server.TLSExpiryWarningDays <= 0 {
+		cfg.Server.TLSExpiryWarningDays = defaultTLSExpiryWarningDays
 	}
 	for i := range cfg.Backends {
 		b := &cfg.Backends[i]
@@ -213,6 +225,26 @@ func applyDefaults(cfg *Config) {
 }
 
 func validate(cfg *Config) error {
+	certPath := strings.TrimSpace(cfg.Server.TLSCertPath)
+	keyPath := strings.TrimSpace(cfg.Server.TLSKeyPath)
+	if (certPath == "") != (keyPath == "") {
+		return fmt.Errorf("server: tls_cert_path and tls_key_path must both be set or both be empty")
+	}
+	if certPath != "" {
+		if err := validateReadableFile(certPath); err != nil {
+			return fmt.Errorf("server: tls_cert_path %q: %w", certPath, err)
+		}
+		if err := validateReadableFile(keyPath); err != nil {
+			return fmt.Errorf("server: tls_key_path %q: %w", keyPath, err)
+		}
+	}
+	if cfg.Server.TLSCheckInterval <= 0 {
+		return fmt.Errorf("server: tls_check_interval must be greater than zero")
+	}
+	if cfg.Server.TLSExpiryWarningDays <= 0 {
+		return fmt.Errorf("server: tls_expiry_warning_days must be greater than zero")
+	}
+
 	if len(cfg.Backends) == 0 {
 		return fmt.Errorf("at least one backend must be configured")
 	}
@@ -259,6 +291,17 @@ func validate(cfg *Config) error {
 		if u.APIKeyHash == "" {
 			return fmt.Errorf("user %q: api_key_hash is required", userKey)
 		}
+	}
+	return nil
+}
+
+func validateReadableFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
 	}
 	return nil
 }
