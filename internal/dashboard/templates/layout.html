@@ -24,7 +24,19 @@
           <h2>{{ .Title }}</h2>
           <a href="/admin/login" class="ghost-link">Logout</a>
         </header>
-        {{ template "content" . }}
+        {{ if eq .Active "overview" }}
+        {{ template "content-overview" . }}
+        {{ else if eq .Active "models" }}
+        {{ template "content-models" . }}
+        {{ else if eq .Active "backends" }}
+        {{ template "content-backends" . }}
+        {{ else if eq .Active "users" }}
+        {{ template "content-users" . }}
+        {{ else if eq .Active "logs" }}
+        {{ template "content-logs" . }}
+        {{ else }}
+        {{ template "content-overview" . }}
+        {{ end }}
       </main>
     </div>
   </body>

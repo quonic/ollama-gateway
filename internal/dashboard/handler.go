@@ -164,6 +164,7 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Overview",
 		"Active":           "overview",
+		"ContentBlock":     "content-overview",
 		"BackendCount":     len(h.cfg.Backends),
 		"ModelCount":       len(h.cfg.Models.Models),
 		"UserCount":        len(h.cfg.Users),
@@ -186,6 +187,7 @@ func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Models",
 		"Active":           "models",
+		"ContentBlock":     "content-models",
 		"Models":           h.cfg.Models.Models,
 		"Backends":         h.cfg.Backends,
 		"DisabledBackends": h.state.disabledBackends,
@@ -200,6 +202,7 @@ func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Backends",
 		"Active":           "backends",
+		"ContentBlock":     "content-backends",
 		"Backends":         h.cfg.Backends,
 		"DisabledBackends": h.state.disabledBackends,
 	}
@@ -213,6 +216,7 @@ func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Users",
 		"Active":           "users",
+		"ContentBlock":     "content-users",
 		"Users":            h.cfg.Users,
 		"DisabledBackends": h.state.disabledBackends,
 		"GeneratedKey":     "",
@@ -242,6 +246,7 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Logs",
 		"Active":           "logs",
+		"ContentBlock":     "content-logs",
 		"DisabledBackends": h.state.disabledBackends,
 		"Filters":          filters,
 		"Page":             page,
@@ -317,6 +322,7 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Users",
 		"Active":           "users",
+		"ContentBlock":     "content-users",
 		"Users":            h.cfg.Users,
 		"DisabledBackends": h.state.disabledBackends,
 		"GeneratedKey":     rawKey,

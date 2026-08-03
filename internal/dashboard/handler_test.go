@@ -64,6 +64,9 @@ func TestDashboardLoginFlow(t *testing.T) {
 	if !strings.Contains(overviewResp.Body.String(), "Overview") {
 		t.Fatalf("expected overview content, got %q", overviewResp.Body.String())
 	}
+	if !strings.Contains(overviewResp.Body.String(), "Configured Backends") {
+		t.Fatalf("expected overview cards content, got %q", overviewResp.Body.String())
+	}
 }
 
 func TestBackendToggle(t *testing.T) {
@@ -193,5 +196,62 @@ func TestGenerateKeyWorkflow(t *testing.T) {
 	}
 	if !strings.Contains(body, "sha256") {
 		t.Fatalf("expected hash output in response, got %q", body)
+	}
+	if !strings.Contains(body, "Configured API Keys") {
+		t.Fatalf("expected users page content, got %q", body)
+	}
+}
+
+func TestAdminPagesRenderOwnContent(t *testing.T) {
+	cfg := &config.Config{
+		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{
+			{Name: "local", URL: "http://127.0.0.1:11434"},
+		},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	tests := []struct {
+		name             string
+		path             string
+		mustContain      string
+		mustNotContain   string
+	}{
+		{name: "overview", path: "/admin/overview", mustContain: "Configured Backends", mustNotContain: "Generated API Key"},
+		{name: "models", path: "/admin/models", mustContain: "Model Catalog", mustNotContain: "Backend Controls"},
+		{name: "backends", path: "/admin/backends", mustContain: "Backend Controls", mustNotContain: "Configured API Keys"},
+		{name: "users", path: "/admin/users", mustContain: "Configured API Keys", mustNotContain: "Filtered Analytics"},
+		{name: "logs", path: "/admin/logs", mustContain: "Filtered Analytics", mustNotContain: "Model Catalog"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set("X-Admin-Token", "super-secret")
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected 200 for %s, got %d", tc.path, resp.Code)
+			}
+
+			body := resp.Body.String()
+			if !strings.Contains(body, tc.mustContain) {
+				t.Fatalf("expected %s to include %q, got %q", tc.path, tc.mustContain, body)
+			}
+			if strings.Contains(body, tc.mustNotContain) {
+				t.Fatalf("expected %s to exclude %q, got %q", tc.path, tc.mustNotContain, body)
+			}
+		})
 	}
 }
