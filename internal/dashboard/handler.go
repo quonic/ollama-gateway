@@ -18,6 +18,7 @@ import (
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
+	"ollama-gateway/internal/models"
 	"ollama-gateway/internal/usage"
 )
 
@@ -32,6 +33,10 @@ type Handler struct {
 	state      *state
 	manager    *backends.Manager
 	models     map[string]config.ModelEntry
+	modelStore *models.Store
+
+	refreshResolverCatalog func(map[string]config.ModelEntry)
+	refreshProxyPricing    func(*usage.PricingConfig)
 }
 
 type state struct {
@@ -49,6 +54,9 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 	}
 	if manager, err := backends.NewManager(cfg); err == nil {
 		h.manager = manager
+	}
+	if usageStore != nil {
+		h.modelStore = models.NewStore(usageStore.DB())
 	}
 	if templates == nil {
 		t, err := template.New("dashboard").Funcs(template.FuncMap{
@@ -87,6 +95,14 @@ func (h *Handler) SetModelCatalog(catalog map[string]config.ModelEntry) {
 		cloned[name] = config.ModelEntry{Name: entry.Name, Backends: refs}
 	}
 	h.models = cloned
+}
+
+func (h *Handler) SetModelRuntimeRefreshers(
+	refreshResolverCatalog func(map[string]config.ModelEntry),
+	refreshProxyPricing func(*usage.PricingConfig),
+) {
+	h.refreshResolverCatalog = refreshResolverCatalog
+	h.refreshProxyPricing = refreshProxyPricing
 }
 
 func (h *Handler) currentModelCatalog() map[string]config.ModelEntry {
@@ -570,6 +586,18 @@ func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
 			h.renderModelsPage(w, fmt.Sprintf("Failed to delete model %q: %v", modelName, err), "")
 			return
 		}
+		if err := h.persistModelMutation("delete", modelName, nil); err != nil {
+			h.renderModelsPage(w, fmt.Sprintf("Model %q removed in-memory but failed to persist mutation: %v", modelName, err), "")
+			return
+		}
+		if err := h.persistModelPricing(); err != nil {
+			h.renderModelsPage(w, fmt.Sprintf("Model %q deleted but failed to persist pricing changes: %v", modelName, err), "")
+			return
+		}
+		if err := h.reloadModelRuntimeFromStore(); err != nil {
+			h.renderModelsPage(w, fmt.Sprintf("Model %q deleted but failed to refresh runtime catalog: %v", modelName, err), "")
+			return
+		}
 		h.renderModelsPage(w, "", fmt.Sprintf("Model %q deleted.", modelName))
 		return
 	}
@@ -622,6 +650,19 @@ func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
 	h.setModelPricing(modelName, inputCost, outputCost)
 	if err := h.applyModelAccess(modelName, limitAccess, selectedUsers); err != nil {
 		h.renderModelsPage(w, fmt.Sprintf("Saved model %q but failed to apply user access: %v", modelName, err), "")
+		return
+	}
+	persistedEntry := h.currentModelCatalog()[modelName]
+	if err := h.persistModelMutation(action, modelName, &persistedEntry); err != nil {
+		h.renderModelsPage(w, fmt.Sprintf("Saved model %q in-memory but failed to persist mutation: %v", modelName, err), "")
+		return
+	}
+	if err := h.persistModelPricing(); err != nil {
+		h.renderModelsPage(w, fmt.Sprintf("Saved model %q but failed to persist pricing changes: %v", modelName, err), "")
+		return
+	}
+	if err := h.reloadModelRuntimeFromStore(); err != nil {
+		h.renderModelsPage(w, fmt.Sprintf("Saved model %q but failed to refresh runtime catalog: %v", modelName, err), "")
 		return
 	}
 
@@ -698,6 +739,74 @@ func (h *Handler) syncModelToConfig(modelName string, entry config.ModelEntry) {
 		h.cfg.Models.Models = map[string]config.ModelEntry{}
 	}
 	h.cfg.Models.Models[modelName] = entry
+}
+
+func (h *Handler) persistModelMutation(action, modelName string, entry *config.ModelEntry) error {
+	if h.modelStore == nil {
+		return nil
+	}
+
+	switch action {
+	case "create", "update":
+		if entry == nil {
+			return fmt.Errorf("missing model entry for %s", action)
+		}
+		if err := h.modelStore.UpsertModel(modelName, *entry); err != nil {
+			return err
+		}
+	case "delete":
+		if err := h.modelStore.DeactivateModel(modelName); err != nil {
+			if errors.Is(err, models.ErrModelNotFound) {
+				return fmt.Errorf("model not found")
+			}
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown model action %q", action)
+	}
+
+	return nil
+}
+
+func (h *Handler) persistModelPricing() error {
+	if h.modelStore == nil {
+		return nil
+	}
+	return h.modelStore.ReplaceModelPricing(h.cfg.Pricing.Models)
+}
+
+func (h *Handler) reloadModelRuntimeFromStore() error {
+	if h.modelStore == nil {
+		if h.refreshResolverCatalog != nil {
+			h.refreshResolverCatalog(h.currentModelCatalog())
+		}
+		if h.refreshProxyPricing != nil {
+			h.refreshProxyPricing(buildUsagePricingConfig(h.cfg.Pricing))
+		}
+		return nil
+	}
+
+	catalog, err := h.modelStore.LoadActiveCatalog()
+	if err != nil {
+		return err
+	}
+	h.SetModelCatalog(catalog)
+	h.cfg.Models.Models = cloneConfigCatalog(catalog)
+
+	pricing, err := h.modelStore.LoadModelPricing()
+	if err != nil {
+		return err
+	}
+	h.cfg.Pricing.Models = pricing
+
+	if h.refreshResolverCatalog != nil {
+		h.refreshResolverCatalog(catalog)
+	}
+	if h.refreshProxyPricing != nil {
+		h.refreshProxyPricing(buildUsagePricingConfig(h.cfg.Pricing))
+	}
+
+	return nil
 }
 
 func (h *Handler) setModelPricing(modelName string, inputCost, outputCost float64) {
@@ -1134,4 +1243,31 @@ func containsString(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func buildUsagePricingConfig(pricing config.PricingConfig) *usage.PricingConfig {
+	out := &usage.PricingConfig{
+		DefaultInputPer1M:  pricing.DefaultInputPer1M,
+		DefaultOutputPer1M: pricing.DefaultOutputPer1M,
+		ModelPricing:       make(map[string]usage.ModelPricing, len(pricing.Models)),
+	}
+	for modelName, mp := range pricing.Models {
+		out.ModelPricing[modelName] = usage.ModelPricing{
+			InputCostPer1M:  mp.InputCostPer1M,
+			OutputCostPer1M: mp.OutputCostPer1M,
+		}
+	}
+	return out
+}
+
+func cloneConfigCatalog(catalog map[string]config.ModelEntry) map[string]config.ModelEntry {
+	cloned := make(map[string]config.ModelEntry, len(catalog))
+	for modelName, entry := range catalog {
+		refs := make([]config.ModelBackendRef, 0, len(entry.Backends))
+		for _, ref := range entry.Backends {
+			refs = append(refs, config.ModelBackendRef{Backend: ref.Backend, Weight: ref.Weight})
+		}
+		cloned[modelName] = config.ModelEntry{Name: entry.Name, Backends: refs}
+	}
+	return cloned
 }

@@ -134,16 +134,20 @@ func main() {
 			"total_active_models_loaded", len(activeCatalog),
 		)
 
-		pricingCfg := &usage.PricingConfig{
-			DefaultInputPer1M:  cfg.Pricing.DefaultInputPer1M,
-			DefaultOutputPer1M: cfg.Pricing.DefaultOutputPer1M,
-			ModelPricing:       make(map[string]usage.ModelPricing),
-		}
-		for modelName, mp := range cfg.Pricing.Models {
-			pricingCfg.ModelPricing[modelName] = usage.ModelPricing{
-				InputCostPer1M:  mp.InputCostPer1M,
-				OutputCostPer1M: mp.OutputCostPer1M,
+		dbPricing, err := modelStore.LoadModelPricing()
+		if err != nil {
+			logger.Warn("failed to load model pricing from database; using config pricing", "error", err)
+		} else if len(dbPricing) == 0 {
+			if len(cfg.Pricing.Models) > 0 {
+				if err := modelStore.ReplaceModelPricing(cfg.Pricing.Models); err != nil {
+					logger.Warn("failed to seed model pricing table from config", "error", err)
+				} else {
+					logger.Info("seeded model pricing table from config", "models", len(cfg.Pricing.Models))
+				}
 			}
+		} else {
+			cfg.Pricing.Models = dbPricing
+			logger.Info("loaded model pricing from database", "models", len(dbPricing))
 		}
 
 		usageLogger = usage.NewUsageLogger(dbStore, usage.DefaultLoggerOptions())
@@ -173,17 +177,7 @@ func main() {
 
 	// Phase 5: Reverse proxy handler setup.
 	proxyHandler := proxy.NewProxyHandler(resolver, usageLogger, authStore)
-	pricingCfg := &usage.PricingConfig{
-		DefaultInputPer1M:  cfg.Pricing.DefaultInputPer1M,
-		DefaultOutputPer1M: cfg.Pricing.DefaultOutputPer1M,
-		ModelPricing:       make(map[string]usage.ModelPricing),
-	}
-	for modelName, mp := range cfg.Pricing.Models {
-		pricingCfg.ModelPricing[modelName] = usage.ModelPricing{
-			InputCostPer1M:  mp.InputCostPer1M,
-			OutputCostPer1M: mp.OutputCostPer1M,
-		}
-	}
+	pricingCfg := usagePricingFromConfig(cfg.Pricing)
 	proxyHandler.SetPricingConfig(pricingCfg)
 
 	// Start health checker in background.
@@ -207,6 +201,10 @@ func main() {
 	}
 	dashboardHandler.SetManager(resolver.Manager())
 	dashboardHandler.SetModelCatalog(activeCatalog)
+	dashboardHandler.SetModelRuntimeRefreshers(
+		resolver.RefreshCatalog,
+		proxyHandler.SetPricingConfig,
+	)
 
 	mux.Handle("/api/", authStore.Middleware(rateLimitMw.Handler(apiRouter)))
 	mux.Handle("/admin/", dashboardHandler)
@@ -258,4 +256,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func usagePricingFromConfig(pricing config.PricingConfig) *usage.PricingConfig {
+	out := &usage.PricingConfig{
+		DefaultInputPer1M:  pricing.DefaultInputPer1M,
+		DefaultOutputPer1M: pricing.DefaultOutputPer1M,
+		ModelPricing:       make(map[string]usage.ModelPricing, len(pricing.Models)),
+	}
+	for modelName, mp := range pricing.Models {
+		out.ModelPricing[modelName] = usage.ModelPricing{
+			InputCostPer1M:  mp.InputCostPer1M,
+			OutputCostPer1M: mp.OutputCostPer1M,
+		}
+	}
+	return out
 }

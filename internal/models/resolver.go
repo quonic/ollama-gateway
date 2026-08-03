@@ -1,6 +1,8 @@
 package models
 
 import (
+	"sync"
+
 	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
 )
@@ -27,6 +29,7 @@ func FromUserConfig(uc *config.UserConfig) UserOverrides {
 // Resolver ties together the model registry and backend manager to fully resolve
 // a user's requested model name into an actual backend pool for proxying.
 type Resolver struct {
+	mu           sync.RWMutex
 	registry     *ModelRegistry
 	manager      *backends.Manager
 	modelWeights map[string][]config.ModelBackendRef // resolvedName → per-backend weight refs from config
@@ -69,7 +72,12 @@ func NewResolverWithCatalog(cfg *config.Config, catalog map[string]config.ModelE
 // pool can be used for weighted round-robin selection via Select(). Returns a
 // ResolutionError (with HTTP status code) on failure.
 func (r *Resolver) Resolve(requestedModel string, overrides UserOverrides) (*backends.BackendPool, error) {
-	resolvedName, backendNames, err := ResolveModel(requestedModel, r.registry, overrides)
+	r.mu.RLock()
+	registry := r.registry
+	weightIndex := r.modelWeights
+	r.mu.RUnlock()
+
+	resolvedName, backendNames, err := ResolveModel(requestedModel, registry, overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +86,7 @@ func (r *Resolver) Resolve(requestedModel string, overrides UserOverrides) (*bac
 	refs := make([]config.ModelBackendRef, 0, len(backendNames))
 	for _, bn := range backendNames {
 		w := backends.DefaultModelWeight // default if not explicitly set in catalog
-		if weightRefs, ok := r.modelWeights[resolvedName]; ok {
+		if weightRefs, ok := weightIndex[resolvedName]; ok {
 			for _, wr := range weightRefs {
 				if wr.Backend == bn && wr.Weight > 0 {
 					w = wr.Weight
@@ -106,12 +114,33 @@ func (r *Resolver) Resolve(requestedModel string, overrides UserOverrides) (*bac
 
 // Registry returns the model registry (for /api/tags and dashboard use).
 func (r *Resolver) Registry() *ModelRegistry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.registry
 }
 
 // Manager returns the backend manager (for health checks and admin operations).
 func (r *Resolver) Manager() *backends.Manager {
 	return r.manager
+}
+
+// RefreshCatalog swaps the resolver's in-memory model catalog and weight mapping.
+// Callers should pass the fully active catalog snapshot they want to route against.
+func (r *Resolver) RefreshCatalog(catalog map[string]config.ModelEntry) {
+	reg := buildRegistryFromCatalog(catalog)
+	weights := make(map[string][]config.ModelBackendRef, len(catalog))
+	for name, mc := range catalog {
+		refs := make([]config.ModelBackendRef, 0, len(mc.Backends))
+		for _, br := range mc.Backends {
+			refs = append(refs, config.ModelBackendRef{Backend: br.Backend, Weight: br.Weight})
+		}
+		weights[name] = refs
+	}
+
+	r.mu.Lock()
+	r.registry = reg
+	r.modelWeights = weights
+	r.mu.Unlock()
 }
 
 // CatalogFromConfig copies the model catalog from config for independent mutation.

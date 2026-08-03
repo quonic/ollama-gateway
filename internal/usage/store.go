@@ -99,6 +99,14 @@ CREATE TABLE IF NOT EXISTS model_backends (
 CREATE INDEX IF NOT EXISTS idx_models_active ON models(active);
 CREATE INDEX IF NOT EXISTS idx_model_backends_backend_name ON model_backends(backend_name);
 
+CREATE TABLE IF NOT EXISTS model_pricing (
+	model_name                   TEXT PRIMARY KEY,
+	input_cost_per_1m_tokens     REAL NOT NULL DEFAULT 0,
+	output_cost_per_1m_tokens    REAL NOT NULL DEFAULT 0,
+	updated_at                   DATETIME DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (model_name) REFERENCES models(name) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS api_users (
 	user_id                 TEXT PRIMARY KEY,
 	api_key_hash            TEXT NOT NULL,

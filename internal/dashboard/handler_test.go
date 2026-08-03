@@ -617,3 +617,108 @@ func TestModelUpdateAndDeleteWorkflow(t *testing.T) {
 		t.Fatalf("expected model removed from beta deny list")
 	}
 }
+
+func TestModelMutationPersistsAndRefreshesRuntime(t *testing.T) {
+	dir := t.TempDir()
+	usageStore, err := usage.NewStore(filepath.Join(dir, "dashboard-model-persist.db"))
+	if err != nil {
+		t.Fatalf("new usage store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = usageStore.Close()
+	})
+
+	cfg := &config.Config{
+		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{
+			{Name: "local", URL: "http://127.0.0.1:11434", Weight: 1},
+			{Name: "edge", URL: "http://127.0.0.1:11435", Weight: 1},
+		},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"alpha": {APIKeyHash: auth.HashAPIKey("alpha-key")},
+		},
+		Pricing: config.PricingConfig{Models: map[string]config.ModelPricing{}},
+	}
+
+	authStore := auth.NewStore(cfg, usageStore.DB())
+	if err := authStore.Validate(); err != nil {
+		t.Fatalf("auth store validate: %v", err)
+	}
+
+	modelStore := models.NewStore(usageStore.DB())
+	if _, err := modelStore.SyncDiscoveredCatalog(models.CatalogFromConfig(cfg)); err != nil {
+		t.Fatalf("seed model catalog: %v", err)
+	}
+	activeCatalog, err := modelStore.LoadActiveCatalog()
+	if err != nil {
+		t.Fatalf("load seeded catalog: %v", err)
+	}
+
+	resolver, err := models.NewResolverWithCatalog(cfg, activeCatalog)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+
+	handler, err := NewHandler(cfg, authStore, usageStore, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	handler.SetManager(resolver.Manager())
+	handler.SetModelCatalog(activeCatalog)
+
+	var capturedPricing *usage.PricingConfig
+	handler.SetModelRuntimeRefreshers(
+		resolver.RefreshCatalog,
+		func(cfg *usage.PricingConfig) {
+			capturedPricing = cfg
+		},
+	)
+
+	form := url.Values{}
+	form.Set("action", "create")
+	form.Set("model_name", "qwen2.5")
+	form.Set("display_name", "Qwen 2.5")
+	form.Set("backend_weights", "edge:2")
+	form.Set("input_cost_per_1m_tokens", "0.6")
+	form.Set("output_cost_per_1m_tokens", "1.2")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/models", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected model create page, got %d", resp.Code)
+	}
+
+	persistedCatalog, err := modelStore.LoadActiveCatalog()
+	if err != nil {
+		t.Fatalf("load persisted catalog: %v", err)
+	}
+	if _, ok := persistedCatalog["qwen2.5"]; !ok {
+		t.Fatalf("expected qwen2.5 persisted in DB catalog")
+	}
+
+	pool, err := resolver.Resolve("qwen2.5", models.UserOverrides{})
+	if err != nil {
+		t.Fatalf("expected resolver refresh to expose qwen2.5, got %v", err)
+	}
+	backend, err := pool.Select()
+	if err != nil {
+		t.Fatalf("select refreshed backend: %v", err)
+	}
+	if backend == nil || backend.Name != "edge" {
+		t.Fatalf("expected refreshed routing to use edge backend, got %#v", backend)
+	}
+
+	if capturedPricing == nil {
+		t.Fatalf("expected pricing refresher callback to run")
+	}
+	if p, ok := capturedPricing.ModelPricing["qwen2.5"]; !ok || p.OutputCostPer1M != 1.2 {
+		t.Fatalf("expected refreshed pricing for qwen2.5, got %#v", capturedPricing.ModelPricing["qwen2.5"])
+	}
+}

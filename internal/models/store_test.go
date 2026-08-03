@@ -215,3 +215,74 @@ func TestDiscoverCatalogFromBackends_PartialFailure(t *testing.T) {
 		t.Fatalf("expected discovered models from healthy backend, got %d", len(catalog))
 	}
 }
+
+func TestModelStore_UpsertDeactivateAndPricing(t *testing.T) {
+	usageStore := newModelTestUsageStore(t)
+	defer usageStore.Close()
+
+	store := NewStore(usageStore.DB())
+
+	err := store.UpsertModel("qwen2.5", config.ModelEntry{
+		Name: "Qwen 2.5",
+		Backends: []config.ModelBackendRef{
+			{Backend: "b1", Weight: 2},
+			{Backend: "b2", Weight: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("upsert model: %v", err)
+	}
+
+	loaded, err := store.LoadActiveCatalog()
+	if err != nil {
+		t.Fatalf("load active catalog after upsert: %v", err)
+	}
+	entry, ok := loaded["qwen2.5"]
+	if !ok {
+		t.Fatalf("expected qwen2.5 in active catalog")
+	}
+	if entry.Name != "Qwen 2.5" {
+		t.Fatalf("expected display name to persist, got %q", entry.Name)
+	}
+	if len(entry.Backends) != 2 {
+		t.Fatalf("expected 2 backend refs, got %#v", entry.Backends)
+	}
+
+	if err := store.UpsertModel("llama3", config.ModelEntry{
+		Name: "Llama 3",
+		Backends: []config.ModelBackendRef{
+			{Backend: "b1", Weight: 1},
+		},
+	}); err != nil {
+		t.Fatalf("upsert secondary model for pricing: %v", err)
+	}
+
+	if err := store.ReplaceModelPricing(map[string]config.ModelPricing{
+		"qwen2.5": {InputCostPer1M: 0.45, OutputCostPer1M: 0.9},
+		"llama3":  {InputCostPer1M: 0.2, OutputCostPer1M: 0.4},
+	}); err != nil {
+		t.Fatalf("replace model pricing: %v", err)
+	}
+
+	pricing, err := store.LoadModelPricing()
+	if err != nil {
+		t.Fatalf("load model pricing: %v", err)
+	}
+	if len(pricing) != 2 {
+		t.Fatalf("expected 2 pricing rows, got %#v", pricing)
+	}
+	if pricing["qwen2.5"].OutputCostPer1M != 0.9 {
+		t.Fatalf("expected qwen2.5 pricing to persist, got %#v", pricing["qwen2.5"])
+	}
+
+	if err := store.DeactivateModel("qwen2.5"); err != nil {
+		t.Fatalf("deactivate model: %v", err)
+	}
+	loaded, err = store.LoadActiveCatalog()
+	if err != nil {
+		t.Fatalf("load active catalog after deactivate: %v", err)
+	}
+	if _, ok := loaded["qwen2.5"]; ok {
+		t.Fatalf("expected qwen2.5 to be inactive")
+	}
+}
