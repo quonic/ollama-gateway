@@ -2,22 +2,159 @@
 <div class="card">
   <h3>Backend Controls</h3>
   <p class="hint">
-    Use toggles to drain traffic from a backend without removing its config.
+    Create, tune, or deactivate backends. Deactivation is blocked when models
+    still reference the backend.
   </p>
-  <ul class="stack-list">
-    {{ range .Backends }}
-    <li>
-      <strong class="mono">{{ .Name }}</strong>
-      <span
-        class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
-        >{{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end
-        }}</span
-      >
+  {{ if .FormError }}
+  <p class="hint" style="color: #b91c1c"><strong>{{ .FormError }}</strong></p>
+  {{ end }} {{ if .FormSuccess }}
+  <p class="hint" style="color: #166534">
+    <strong>{{ .FormSuccess }}</strong>
+  </p>
+  {{ end }}
+</div>
+
+<div class="card">
+  <h3>Create Backend</h3>
+  <form method="post" action="/admin/backends" class="inline-form">
+    <input type="hidden" name="action" value="create" />
+
+    <label for="create_backend_name">Name</label>
+    <input
+      id="create_backend_name"
+      name="backend_name"
+      type="text"
+      placeholder="edge-us-east"
+      required
+    />
+
+    <label for="create_backend_url">URL</label>
+    <input
+      id="create_backend_url"
+      name="backend_url"
+      type="text"
+      placeholder="http://127.0.0.1:11434"
+      required
+    />
+
+    <label for="create_backend_weight">Weight</label>
+    <input
+      id="create_backend_weight"
+      name="backend_weight"
+      type="text"
+      placeholder="1"
+      required
+    />
+
+    <label for="create_backend_timeout">Timeout (seconds)</label>
+    <input
+      id="create_backend_timeout"
+      name="backend_timeout_seconds"
+      type="text"
+      placeholder="120"
+      required
+    />
+
+    <label for="create_backend_health">Health check path</label>
+    <input
+      id="create_backend_health"
+      name="backend_health_path"
+      type="text"
+      placeholder="/api/version"
+      required
+    />
+
+    <label for="create_backend_tag">Tag (optional)</label>
+    <input
+      id="create_backend_tag"
+      name="backend_tag"
+      type="text"
+      placeholder="gpu-a10"
+    />
+
+    <button type="submit">Create Backend</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Configured Backends</h3>
+  {{ range .Backends }}
+  <div class="generated-key" style="margin-bottom: 12px">
+    <h4 class="mono">{{ .Name }}</h4>
+    <p class="hint">URL: {{ .URL }}</p>
+    <p class="hint">
+      Status: {{ if index $.DisabledBackends .Name }}disabled{{ else }}enabled{{
+      end }}
+      ·
       <a class="inline-action" href="/admin/backends/toggle/{{ .Name }}"
-        >toggle</a
+        >toggle drain state</a
       >
-    </li>
-    {{ end }}
-  </ul>
+    </p>
+
+    <form
+      method="post"
+      action="/admin/backends"
+      class="inline-form"
+      style="margin-top: 10px"
+    >
+      <input type="hidden" name="action" value="update" />
+      <input type="hidden" name="backend_name" value="{{ .Name }}" />
+
+      <label for="url_{{ .Name }}">URL</label>
+      <input
+        id="url_{{ .Name }}"
+        name="backend_url"
+        type="text"
+        value="{{ .URL }}"
+      />
+
+      <label for="weight_{{ .Name }}">Weight</label>
+      <input
+        id="weight_{{ .Name }}"
+        name="backend_weight"
+        type="text"
+        value="{{ .Weight }}"
+      />
+
+      <label for="timeout_{{ .Name }}">Timeout (seconds)</label>
+      <input
+        id="timeout_{{ .Name }}"
+        name="backend_timeout_seconds"
+        type="text"
+        value="{{ .Timeout.Seconds }}"
+      />
+
+      <label for="health_{{ .Name }}">Health check path</label>
+      <input
+        id="health_{{ .Name }}"
+        name="backend_health_path"
+        type="text"
+        value="{{ .HealthCheckPath }}"
+      />
+
+      <label for="tag_{{ .Name }}">Tag</label>
+      <input
+        id="tag_{{ .Name }}"
+        name="backend_tag"
+        type="text"
+        value="{{ .Tag }}"
+      />
+
+      <button type="submit">Save Backend Settings</button>
+    </form>
+
+    <form
+      method="post"
+      action="/admin/backends"
+      class="inline-form"
+      style="margin-top: 8px"
+      onsubmit="return confirm('Deactivate backend {{ .Name }}? This is blocked if any active model still references it.')"
+    >
+      <input type="hidden" name="action" value="deactivate" />
+      <input type="hidden" name="backend_name" value="{{ .Name }}" />
+      <button type="submit">Deactivate Backend</button>
+    </form>
+  </div>
+  {{ end }}
 </div>
 {{ end }} {{ define "backends.html" }}{{ template "layout.html" . }}{{ end }}

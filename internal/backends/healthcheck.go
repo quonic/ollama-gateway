@@ -9,25 +9,25 @@ import (
 
 // HealthChecker periodically checks backend health via HTTP and updates their status.
 type HealthChecker struct {
-	client   *http.Client
-	backends []*Backend
-	interval time.Duration // how often to check each cycle
-	timeout  time.Duration // per-check HTTP timeout
+	client           *http.Client
+	backendsProvider func() []*Backend
+	interval         time.Duration // how often to check each cycle
+	timeout          time.Duration // per-check HTTP timeout
 }
 
 // NewHealthChecker creates a checker that will poll all provided backends at the given interval.
-func NewHealthChecker(backends []*Backend, interval, timeout time.Duration) *HealthChecker {
+func NewHealthChecker(backendsProvider func() []*Backend, interval, timeout time.Duration) *HealthChecker {
 	return &HealthChecker{
-		client:   &http.Client{Timeout: timeout},
-		backends: backends,
-		interval: interval,
-		timeout:  timeout,
+		client:           &http.Client{Timeout: timeout},
+		backendsProvider: backendsProvider,
+		interval:         interval,
+		timeout:          timeout,
 	}
 }
 
 // CheckAll performs a single health check cycle against all backends and updates their state.
 func (hc *HealthChecker) CheckAll(ctx context.Context) {
-	for _, b := range hc.backends {
+	for _, b := range hc.backendsProvider() {
 		hc.checkBackend(ctx, b)
 	}
 }

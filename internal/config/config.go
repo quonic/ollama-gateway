@@ -56,6 +56,7 @@ type Backend struct {
 	Name            string            `yaml:"name"`
 	URL             string            `yaml:"url"`
 	Weight          int               `yaml:"weight"`                      // weight for round-robin (default 1)
+	Tag             string            `yaml:"tag,omitempty"`               // optional backend tag for grouping/metadata
 	Headers         map[string]string `yaml:"headers,omitempty"`           // extra headers sent to backend
 	Timeout         time.Duration     `yaml:"timeout"`                     // per-request timeout override
 	HealthCheckPath string            `yaml:"health_check_path,omitempty"` // path for health checks (default /api/version)

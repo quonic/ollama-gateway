@@ -10,6 +10,7 @@ type Backend struct {
 	Name            string            // Unique identifier, matches config name
 	URL             *url.URL          // Parsed base URL of the Ollama server
 	Weight          int               // Configured weight for round-robin distribution
+	Tag             string            // Optional admin-defined tag
 	HealthCheckPath string            // HTTP path used for health checks (e.g. /api/version)
 	Timeout         time.Duration     // Per-request timeout when proxying to this backend
 	Headers         map[string]string // Extra headers sent to backend on every request
@@ -28,7 +29,7 @@ type Backend struct {
 }
 
 // NewBackend creates a Backend from config values, initializing scheduling state.
-func NewBackend(name string, rawURL string, weight int, healthCheckPath string, timeout time.Duration, headers map[string]string) (*Backend, error) {
+func NewBackend(name string, rawURL string, weight int, tag string, healthCheckPath string, timeout time.Duration, headers map[string]string) (*Backend, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
@@ -38,6 +39,7 @@ func NewBackend(name string, rawURL string, weight int, healthCheckPath string, 
 		Name:            name,
 		URL:             u,
 		Weight:          weight,
+		Tag:             tag,
 		HealthCheckPath: healthCheckPath,
 		Timeout:         timeout,
 		Headers:         headers,
@@ -75,6 +77,23 @@ func (b *Backend) SetHealth(healthy bool) {
 	} else {
 		b.effectiveWeight = 0
 	}
+}
+
+// UpdateConfig mutates runtime backend fields used by routing and health checks.
+func (b *Backend) UpdateConfig(rawURL string, weight int, tag string, timeout time.Duration, healthCheckPath string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	b.URL = u
+	b.Weight = weight
+	b.Tag = tag
+	b.Timeout = timeout
+	b.HealthCheckPath = healthCheckPath
+	if b.healthy {
+		b.effectiveWeight = weight
+	}
+	return nil
 }
 
 // MarkFailure increments the consecutive failure counter and updates last check time.

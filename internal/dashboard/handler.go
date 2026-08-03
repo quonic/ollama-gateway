@@ -26,14 +26,15 @@ import (
 var dashboardFS embed.FS
 
 type Handler struct {
-	cfg        *config.Config
-	authStore  *auth.Store
-	usageStore *usage.Store
-	templates  *template.Template
-	state      *state
-	manager    *backends.Manager
-	models     map[string]config.ModelEntry
-	modelStore *models.Store
+	cfg          *config.Config
+	authStore    *auth.Store
+	usageStore   *usage.Store
+	templates    *template.Template
+	state        *state
+	manager      *backends.Manager
+	models       map[string]config.ModelEntry
+	modelStore   *models.Store
+	backendStore *backends.Store
 
 	refreshResolverCatalog func(map[string]config.ModelEntry)
 	refreshProxyPricing    func(*usage.PricingConfig)
@@ -57,6 +58,7 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 	}
 	if usageStore != nil {
 		h.modelStore = models.NewStore(usageStore.DB())
+		h.backendStore = backends.NewStore(usageStore.DB())
 	}
 	if templates == nil {
 		t, err := template.New("dashboard").Funcs(template.FuncMap{
@@ -137,6 +139,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && path == "models" {
 		h.handleModelAction(w, r)
+		return
+	}
+	if r.Method == http.MethodPost && path == "backends" {
+		h.handleBackendAction(w, r)
 		return
 	}
 	if path == "login" {
@@ -317,13 +323,25 @@ func (h *Handler) renderModelsPage(w http.ResponseWriter, formError, formSuccess
 }
 
 func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
+	h.renderBackendsPage(w, "", "")
+}
+
+func (h *Handler) renderBackendsPage(w http.ResponseWriter, formError, formSuccess string) {
+	viewBackends := make([]config.Backend, len(h.cfg.Backends))
+	copy(viewBackends, h.cfg.Backends)
+	sort.Slice(viewBackends, func(i, j int) bool {
+		return viewBackends[i].Name < viewBackends[j].Name
+	})
+
 	data := map[string]any{
 		"Title":            "Backends",
-		"Subtitle":         "Enable or disable backend pools without restarting the service.",
+		"Subtitle":         "Create, edit, and deactivate backend targets without restarting the service.",
 		"Active":           "backends",
 		"ContentBlock":     "content-backends",
-		"Backends":         h.cfg.Backends,
+		"Backends":         viewBackends,
 		"DisabledBackends": h.state.disabledBackends,
+		"FormError":        formError,
+		"FormSuccess":      formSuccess,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "backends.html", data); err != nil {
@@ -453,6 +471,221 @@ func (h *Handler) handleBackendToggle(w http.ResponseWriter, path string) {
 	}
 	h.state.disabledBackends[name] = true
 	fmt.Fprintf(w, "Backend %q disabled", name)
+}
+
+func (h *Handler) handleBackendAction(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.httpError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+
+	action := strings.TrimSpace(r.FormValue("action"))
+	name := strings.TrimSpace(r.FormValue("backend_name"))
+	if name == "" {
+		h.renderBackendsPage(w, "Backend name is required.", "")
+		return
+	}
+
+	if action == "deactivate" {
+		blockingModels := h.modelsReferencingBackend(name)
+		if len(blockingModels) > 0 {
+			h.renderBackendsPage(w, fmt.Sprintf("Cannot deactivate backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "")
+			return
+		}
+		if err := h.deactivateBackend(name); err != nil {
+			h.renderBackendsPage(w, fmt.Sprintf("Failed to deactivate backend %q: %v", name, err), "")
+			return
+		}
+		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q deactivated.", name))
+		return
+	}
+
+	backendCfg, err := h.buildBackendConfigFromForm(r)
+	if err != nil {
+		h.renderBackendsPage(w, fmt.Sprintf("Invalid backend settings for %q: %v", name, err), "")
+		return
+	}
+
+	switch action {
+	case "create":
+		if err := h.createBackend(backendCfg); err != nil {
+			h.renderBackendsPage(w, fmt.Sprintf("Failed to create backend %q: %v", name, err), "")
+			return
+		}
+		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q created.", name))
+	case "update":
+		if err := h.updateBackend(backendCfg); err != nil {
+			h.renderBackendsPage(w, fmt.Sprintf("Failed to update backend %q: %v", name, err), "")
+			return
+		}
+		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q updated.", name))
+	default:
+		h.renderBackendsPage(w, "Unknown backend action.", "")
+	}
+}
+
+func (h *Handler) buildBackendConfigFromForm(r *http.Request) (config.Backend, error) {
+	name := strings.TrimSpace(r.FormValue("backend_name"))
+	url := strings.TrimSpace(r.FormValue("backend_url"))
+	if name == "" {
+		return config.Backend{}, fmt.Errorf("backend name is required")
+	}
+	if url == "" {
+		return config.Backend{}, fmt.Errorf("backend url is required")
+	}
+
+	weight, err := strconv.Atoi(strings.TrimSpace(r.FormValue("backend_weight")))
+	if err != nil || weight <= 0 {
+		return config.Backend{}, fmt.Errorf("weight must be a positive integer")
+	}
+
+	timeoutSeconds, err := strconv.Atoi(strings.TrimSpace(r.FormValue("backend_timeout_seconds")))
+	if err != nil || timeoutSeconds <= 0 {
+		return config.Backend{}, fmt.Errorf("timeout seconds must be a positive integer")
+	}
+
+	healthPath := strings.TrimSpace(r.FormValue("backend_health_path"))
+	if healthPath == "" {
+		healthPath = "/api/version"
+	}
+	if !strings.HasPrefix(healthPath, "/") {
+		return config.Backend{}, fmt.Errorf("health check path must start with /")
+	}
+
+	return config.Backend{
+		Name:            name,
+		URL:             url,
+		Weight:          weight,
+		Tag:             strings.TrimSpace(r.FormValue("backend_tag")),
+		Timeout:         time.Duration(timeoutSeconds) * time.Second,
+		HealthCheckPath: healthPath,
+	}, nil
+}
+
+func (h *Handler) createBackend(backendCfg config.Backend) error {
+	if _, exists := h.backendByName(backendCfg.Name); exists {
+		return fmt.Errorf("backend already exists")
+	}
+	if h.backendStore != nil {
+		if err := h.backendStore.UpsertBackend(backendCfg); err != nil {
+			return err
+		}
+	}
+	if h.manager != nil {
+		if err := h.manager.UpsertBackend(backendCfg); err != nil {
+			return err
+		}
+	}
+	delete(h.state.disabledBackends, backendCfg.Name)
+	h.upsertBackendInConfig(backendCfg)
+	return h.reloadBackendsFromStoreIfAvailable()
+}
+
+func (h *Handler) updateBackend(backendCfg config.Backend) error {
+	if _, exists := h.backendByName(backendCfg.Name); !exists {
+		return fmt.Errorf("backend not found")
+	}
+	if h.backendStore != nil {
+		if err := h.backendStore.UpsertBackend(backendCfg); err != nil {
+			return err
+		}
+	}
+	if h.manager != nil {
+		if err := h.manager.UpsertBackend(backendCfg); err != nil {
+			return err
+		}
+	}
+	delete(h.state.disabledBackends, backendCfg.Name)
+	h.upsertBackendInConfig(backendCfg)
+	return h.reloadBackendsFromStoreIfAvailable()
+}
+
+func (h *Handler) deactivateBackend(name string) error {
+	if h.backendStore != nil {
+		if err := h.backendStore.DeactivateBackend(name); err != nil {
+			if errors.Is(err, backends.ErrBackendNotFound) {
+				return fmt.Errorf("backend not found")
+			}
+			return err
+		}
+	}
+	if h.manager != nil {
+		if err := h.manager.DeactivateBackend(name); err != nil {
+			if errors.Is(err, backends.ErrBackendNotFound) {
+				return fmt.Errorf("backend not found")
+			}
+			return err
+		}
+	}
+	delete(h.state.disabledBackends, name)
+	h.removeBackendFromConfig(name)
+	return h.reloadBackendsFromStoreIfAvailable()
+}
+
+func (h *Handler) modelsReferencingBackend(backendName string) []string {
+	catalog := h.currentModelCatalog()
+	out := []string{}
+	for modelName, entry := range catalog {
+		for _, ref := range entry.Backends {
+			if ref.Backend == backendName {
+				out = append(out, modelName)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (h *Handler) backendByName(name string) (config.Backend, bool) {
+	for _, b := range h.cfg.Backends {
+		if b.Name == name {
+			return b, true
+		}
+	}
+	return config.Backend{}, false
+}
+
+func (h *Handler) upsertBackendInConfig(updated config.Backend) {
+	for i, b := range h.cfg.Backends {
+		if b.Name == updated.Name {
+			h.cfg.Backends[i] = updated
+			return
+		}
+	}
+	h.cfg.Backends = append(h.cfg.Backends, updated)
+}
+
+func (h *Handler) removeBackendFromConfig(name string) {
+	filtered := make([]config.Backend, 0, len(h.cfg.Backends))
+	for _, b := range h.cfg.Backends {
+		if b.Name == name {
+			continue
+		}
+		filtered = append(filtered, b)
+	}
+	h.cfg.Backends = filtered
+}
+
+func (h *Handler) reloadBackendsFromStoreIfAvailable() error {
+	if h.backendStore == nil {
+		return nil
+	}
+	activeBackends, err := h.backendStore.LoadActiveBackends()
+	if err != nil {
+		return err
+	}
+	h.cfg.Backends = activeBackends
+	activeNames := map[string]bool{}
+	for _, b := range activeBackends {
+		activeNames[b.Name] = true
+	}
+	for name := range h.state.disabledBackends {
+		if !activeNames[name] {
+			delete(h.state.disabledBackends, name)
+		}
+	}
+	return nil
 }
 
 func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ollama-gateway/internal/auth"
+	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/dashboard"
 	"ollama-gateway/internal/models"
@@ -43,11 +44,12 @@ func main() {
 
 	// Phase 2: Usage tracking setup and DB-backed model catalog storage
 	var (
-		usageLogger *usage.UsageLogger
-		dbStore     *usage.Store
-		modelStore  *models.Store
-		authStore   *auth.Store
-		userCount   int
+		usageLogger  *usage.UsageLogger
+		dbStore      *usage.Store
+		backendStore *backends.Store
+		modelStore   *models.Store
+		authStore    *auth.Store
+		userCount    int
 	)
 	if cfg.Database.Path != "" {
 		dbStore, err = usage.NewStore(cfg.Database.Path)
@@ -68,6 +70,18 @@ func main() {
 			userCount = len(cfg.Users)
 		}
 		logger.Info("auth store initialized", "users", userCount)
+
+		backendStore = backends.NewStore(dbStore.DB())
+		if err := backendStore.SeedBackends(cfg.Backends); err != nil {
+			logger.Warn("backend seed from config failed", "error", err)
+		}
+		dbBackends, err := backendStore.LoadActiveBackends()
+		if err != nil {
+			logger.Warn("failed to load active backends from database; using config backends", "error", err)
+		} else if len(dbBackends) > 0 {
+			cfg.Backends = dbBackends
+			logger.Info("loaded active backends from database", "backends", len(dbBackends))
+		}
 
 		modelStore = models.NewStore(dbStore.DB())
 		syncStats := models.SyncStats{}

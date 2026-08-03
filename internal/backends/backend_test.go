@@ -6,12 +6,12 @@ import (
 )
 
 func newTestBackend(name, rawURL string, weight int) *Backend {
-	b, _ := NewBackend(name, rawURL, weight, "/api/version", 30*time.Second, nil)
+	b, _ := NewBackend(name, rawURL, weight, "", "/api/version", 30*time.Second, nil)
 	return b
 }
 
 func TestNewBackend(t *testing.T) {
-	b, err := NewBackend("test-backend", "http://localhost:11434", 5, "/api/health", 30*time.Second, map[string]string{"X-Custom": "val"})
+	b, err := NewBackend("test-backend", "http://localhost:11434", 5, "prod", "/api/health", 30*time.Second, map[string]string{"X-Custom": "val"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -24,6 +24,9 @@ func TestNewBackend(t *testing.T) {
 	if b.Weight != 5 {
 		t.Errorf("expected weight 5, got %d", b.Weight)
 	}
+	if b.Tag != "prod" {
+		t.Errorf("expected tag prod, got %q", b.Tag)
+	}
 	if !b.IsHealthy() {
 		t.Error("new backend should start healthy")
 	}
@@ -33,7 +36,7 @@ func TestNewBackend(t *testing.T) {
 }
 
 func TestNewBackend_InvalidURL(t *testing.T) {
-	_, err := NewBackend("bad", "://invalid-url", 1, "/api/version", 30*time.Second, nil)
+	_, err := NewBackend("bad", "://invalid-url", 1, "", "/api/version", 30*time.Second, nil)
 	if err == nil {
 		t.Error("expected error for invalid URL")
 	}

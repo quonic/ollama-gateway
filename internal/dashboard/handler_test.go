@@ -8,8 +8,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"ollama-gateway/internal/auth"
+	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/models"
 	"ollama-gateway/internal/usage"
@@ -720,5 +722,167 @@ func TestModelMutationPersistsAndRefreshesRuntime(t *testing.T) {
 	}
 	if p, ok := capturedPricing.ModelPricing["qwen2.5"]; !ok || p.OutputCostPer1M != 1.2 {
 		t.Fatalf("expected refreshed pricing for qwen2.5, got %#v", capturedPricing.ModelPricing["qwen2.5"])
+	}
+}
+
+func TestBackendCreateUpdateDeactivatePersists(t *testing.T) {
+	dir := t.TempDir()
+	usageStore, err := usage.NewStore(filepath.Join(dir, "dashboard-backend-persist.db"))
+	if err != nil {
+		t.Fatalf("new usage store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = usageStore.Close()
+	})
+
+	cfg := &config.Config{
+		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{
+			Name:            "local",
+			URL:             "http://127.0.0.1:11434",
+			Weight:          1,
+			Timeout:         30 * time.Second,
+			HealthCheckPath: "/api/version",
+		}},
+		HealthCheck: config.HealthCheckConfig{IntervalSeconds: 10, TimeoutSeconds: 5, UnhealthyThreshold: 3},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+
+	authStore := auth.NewStore(cfg, usageStore.DB())
+	if err := authStore.Validate(); err != nil {
+		t.Fatalf("auth store validate: %v", err)
+	}
+
+	backendStore := backends.NewStore(usageStore.DB())
+	if err := backendStore.SeedBackends(cfg.Backends); err != nil {
+		t.Fatalf("seed backends: %v", err)
+	}
+
+	handler, err := NewHandler(cfg, authStore, usageStore, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	manager, err := backends.NewManager(cfg)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	handler.SetManager(manager)
+
+	create := url.Values{}
+	create.Set("action", "create")
+	create.Set("backend_name", "edge")
+	create.Set("backend_url", "http://127.0.0.1:11435")
+	create.Set("backend_weight", "2")
+	create.Set("backend_timeout_seconds", "45")
+	create.Set("backend_health_path", "/health")
+	create.Set("backend_tag", "gpu")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(create.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected backend create page, got %d", resp.Code)
+	}
+
+	loaded, err := backendStore.LoadActiveBackends()
+	if err != nil {
+		t.Fatalf("load active backends: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("expected two active backends after create, got %#v", loaded)
+	}
+	if _, ok := manager.GetByName("edge"); !ok {
+		t.Fatalf("expected runtime manager to include new backend")
+	}
+
+	update := url.Values{}
+	update.Set("action", "update")
+	update.Set("backend_name", "edge")
+	update.Set("backend_url", "http://127.0.0.1:12435")
+	update.Set("backend_weight", "5")
+	update.Set("backend_timeout_seconds", "90")
+	update.Set("backend_health_path", "/alive")
+	update.Set("backend_tag", "gpu-b")
+
+	updateReq := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(update.Encode()))
+	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	updateReq.Header.Set("X-Admin-Token", "super-secret")
+	updateResp := httptest.NewRecorder()
+	handler.ServeHTTP(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("expected backend update page, got %d", updateResp.Code)
+	}
+
+	edge, ok := manager.GetByName("edge")
+	if !ok || edge.URL.String() != "http://127.0.0.1:12435" || edge.Weight != 5 || edge.Tag != "gpu-b" {
+		t.Fatalf("expected runtime backend updated, got %#v", edge)
+	}
+
+	deactivate := url.Values{}
+	deactivate.Set("action", "deactivate")
+	deactivate.Set("backend_name", "edge")
+
+	deactivateReq := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(deactivate.Encode()))
+	deactivateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deactivateReq.Header.Set("X-Admin-Token", "super-secret")
+	deactivateResp := httptest.NewRecorder()
+	handler.ServeHTTP(deactivateResp, deactivateReq)
+	if deactivateResp.Code != http.StatusOK {
+		t.Fatalf("expected backend deactivate page, got %d", deactivateResp.Code)
+	}
+
+	loaded, err = backendStore.LoadActiveBackends()
+	if err != nil {
+		t.Fatalf("load backends after deactivate: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].Name != "local" {
+		t.Fatalf("expected only local active after deactivate, got %#v", loaded)
+	}
+}
+
+func TestBackendDeactivateBlockedWhenModelReferencesBackend(t *testing.T) {
+	cfg := &config.Config{
+		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{
+			Name:            "edge",
+			URL:             "http://127.0.0.1:11435",
+			Weight:          1,
+			Timeout:         30 * time.Second,
+			HealthCheckPath: "/api/version",
+		}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"qwen2.5": {Name: "qwen2.5", Backends: []config.ModelBackendRef{{Backend: "edge", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("action", "deactivate")
+	form.Set("backend_name", "edge")
+	req := httptest.NewRequest(http.MethodPost, "/admin/backends", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected backend page response, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Cannot deactivate backend") || !strings.Contains(body, "qwen2.5") {
+		t.Fatalf("expected model-reference blocker message, got %q", body)
+	}
+	if _, ok := handler.backendByName("edge"); !ok {
+		t.Fatalf("expected backend to remain configured when blocked")
 	}
 }
