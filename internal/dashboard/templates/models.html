@@ -2,18 +2,188 @@
 <div class="card">
   <h3>Model Catalog</h3>
   <p>
-    Runtime edits made here are kept in memory for the current process and are
-    not persisted to disk.
+    Runtime edits made here are kept in memory for the current process. Backend
+    refs use backend:weight format.
   </p>
-  <ul class="stack-list">
-    {{ range $name, $entry := .Models }}
-    <li>
-      <strong class="mono">{{ $name }}</strong>
-      <span class="list-meta"
-        >{{ range $entry.Backends }}{{ .Backend }} {{ end }}
-      </span>
-    </li>
-    {{ end }}
-  </ul>
+  <p class="hint" style="margin-top: 8px">
+    Default pricing fallback: input {{ .DefaultInputCost }} / output {{
+    .DefaultOutputCost }} per 1M tokens.
+  </p>
+  {{ if .FormError }}
+  <p class="hint" style="color: #b91c1c"><strong>{{ .FormError }}</strong></p>
+  {{ end }} {{ if .FormSuccess }}
+  <p class="hint" style="color: #166534">
+    <strong>{{ .FormSuccess }}</strong>
+  </p>
+  {{ end }}
+</div>
+
+<div class="card">
+  <h3>Create Model</h3>
+  <form method="post" action="/admin/models" class="inline-form">
+    <input type="hidden" name="action" value="create" />
+
+    <label for="create_model_name">Model name</label>
+    <input
+      id="create_model_name"
+      name="model_name"
+      type="text"
+      placeholder="llama3.2"
+      required
+    />
+
+    <label for="create_display_name">Display name</label>
+    <input
+      id="create_display_name"
+      name="display_name"
+      type="text"
+      placeholder="Llama 3.2"
+    />
+
+    <label for="create_backend_weights"
+      >Backends (backend:weight, comma separated)</label
+    >
+    <input
+      id="create_backend_weights"
+      name="backend_weights"
+      type="text"
+      placeholder="local:1"
+      required
+    />
+
+    <label for="create_input_cost">Input cost per 1M tokens (optional)</label>
+    <input
+      id="create_input_cost"
+      name="input_cost_per_1m_tokens"
+      type="text"
+      placeholder="0.40"
+    />
+
+    <label for="create_output_cost">Output cost per 1M tokens (optional)</label>
+    <input
+      id="create_output_cost"
+      name="output_cost_per_1m_tokens"
+      type="text"
+      placeholder="0.80"
+    />
+
+    <label>
+      <input type="checkbox" name="limit_access" />
+      Limit access to selected users
+    </label>
+    <div>
+      {{ range $user := .AllUsers }}
+      <label style="display: block; margin: 4px 0">
+        <input type="checkbox" name="user_access" value="{{ $user }}" /> {{
+        $user }}
+      </label>
+      {{ end }}
+    </div>
+
+    <button type="submit">Create Model</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Configured Models</h3>
+  {{ range $model := .Models }}
+  <div class="generated-key" style="margin-bottom: 12px">
+    <h4 class="mono">{{ $model.Name }}</h4>
+    <p class="hint">Current backend refs: {{ $model.BackendWeightsText }}</p>
+    <p class="hint">Users with access: {{ $model.AccessUsersText }}</p>
+
+    <form
+      method="post"
+      action="/admin/models"
+      class="inline-form"
+      style="margin-top: 10px"
+    >
+      <input type="hidden" name="action" value="update" />
+      <input type="hidden" name="model_name" value="{{ $model.Name }}" />
+
+      <label for="display_{{ $model.Name }}">Display name</label>
+      <input
+        id="display_{{ $model.Name }}"
+        name="display_name"
+        type="text"
+        value="{{ $model.DisplayName }}"
+      />
+
+      <label for="refs_{{ $model.Name }}">Backends (backend:weight)</label>
+      <input
+        id="refs_{{ $model.Name }}"
+        name="backend_weights"
+        type="text"
+        value="{{ $model.BackendWeightsText }}"
+      />
+
+      <label for="input_cost_{{ $model.Name }}">Input cost per 1M tokens</label>
+      <input
+        id="input_cost_{{ $model.Name }}"
+        name="input_cost_per_1m_tokens"
+        type="text"
+        value="{{ $model.InputCost }}"
+      />
+
+      <label for="output_cost_{{ $model.Name }}"
+        >Output cost per 1M tokens</label
+      >
+      <input
+        id="output_cost_{{ $model.Name }}"
+        name="output_cost_per_1m_tokens"
+        type="text"
+        value="{{ $model.OutputCost }}"
+      />
+
+      <label>
+        <input
+          type="checkbox"
+          name="limit_access"
+          {{
+          if
+          $model.AccessLimited
+          }}checked{{
+          end
+          }}
+        />
+        Limit access to selected users
+      </label>
+      <div>
+        {{ range $user := $.AllUsers }}
+        <label style="display: block; margin: 4px 0">
+          <input
+            type="checkbox"
+            name="user_access"
+            value="{{ $user }}"
+            {{
+            if
+            (contains
+            $model.AccessUsers
+            $user)
+            }}checked{{
+            end
+            }}
+          />
+          {{ $user }}
+        </label>
+        {{ end }}
+      </div>
+
+      <button type="submit">Save Model Settings</button>
+    </form>
+
+    <form
+      method="post"
+      action="/admin/models"
+      class="inline-form"
+      style="margin-top: 8px"
+      onsubmit="return confirm('Delete model {{ $model.Name }}? This removes routing, pricing, and user allow/deny references.')"
+    >
+      <input type="hidden" name="action" value="delete" />
+      <input type="hidden" name="model_name" value="{{ $model.Name }}" />
+      <button type="submit">Delete Model</button>
+    </form>
+  </div>
+  {{ end }}
 </div>
 {{ end }} {{ define "models.html" }}{{ template "layout.html" . }}{{ end }}

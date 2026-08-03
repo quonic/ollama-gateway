@@ -478,3 +478,142 @@ func TestUsersPageShowsPerUserStats(t *testing.T) {
 		t.Fatalf("expected aggregated user cost in response, got %q", body)
 	}
 }
+
+func TestModelCreateWorkflow(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}, {Name: "edge", URL: "http://127.0.0.1:11435"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"alpha": {APIKeyHash: auth.HashAPIKey("alpha-key")},
+			"beta":  {APIKeyHash: auth.HashAPIKey("beta-key")},
+		},
+		Pricing: config.PricingConfig{Models: map[string]config.ModelPricing{}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("action", "create")
+	form.Set("model_name", "qwen2.5")
+	form.Set("display_name", "Qwen 2.5")
+	form.Set("backend_weights", "local:2, edge:1")
+	form.Set("input_cost_per_1m_tokens", "0.45")
+	form.Set("output_cost_per_1m_tokens", "0.9")
+	form.Set("limit_access", "on")
+	form.Add("user_access", "alpha")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/models", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected model create page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "qwen2.5") || !strings.Contains(body, "created.") {
+		t.Fatalf("expected create success message, got %q", body)
+	}
+
+	entry, ok := handler.currentModelCatalog()["qwen2.5"]
+	if !ok {
+		t.Fatalf("expected new model in catalog")
+	}
+	if len(entry.Backends) != 2 || entry.Backends[0].Backend != "local" || entry.Backends[0].Weight != 2 {
+		t.Fatalf("unexpected backend refs: %#v", entry.Backends)
+	}
+
+	price, ok := cfg.Pricing.Models["qwen2.5"]
+	if !ok || price.InputCostPer1M != 0.45 || price.OutputCostPer1M != 0.9 {
+		t.Fatalf("expected pricing update, got %#v", cfg.Pricing.Models["qwen2.5"])
+	}
+
+	alpha := cfg.Users["alpha"]
+	beta := cfg.Users["beta"]
+	if containsCSVValue(alpha.ModelDeny, "qwen2.5") {
+		t.Fatalf("expected alpha to be allowed")
+	}
+	if !containsCSVValue(beta.ModelDeny, "qwen2.5") {
+		t.Fatalf("expected beta to be denied")
+	}
+}
+
+func TestModelUpdateAndDeleteWorkflow(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}, {Name: "edge", URL: "http://127.0.0.1:11435"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"qwen2.5": {Name: "qwen2.5", Backends: []config.ModelBackendRef{{Backend: "local", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"alpha": {APIKeyHash: auth.HashAPIKey("alpha-key"), ModelAllow: []string{"qwen2.5"}},
+			"beta":  {APIKeyHash: auth.HashAPIKey("beta-key"), ModelDeny: []string{"qwen2.5"}},
+		},
+		Pricing: config.PricingConfig{Models: map[string]config.ModelPricing{"qwen2.5": {InputCostPer1M: 0.45, OutputCostPer1M: 0.9}}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	updateForm := url.Values{}
+	updateForm.Set("action", "update")
+	updateForm.Set("model_name", "qwen2.5")
+	updateForm.Set("display_name", "Qwen 2.5 Turbo")
+	updateForm.Set("backend_weights", "edge:3")
+	updateForm.Set("input_cost_per_1m_tokens", "0.5")
+	updateForm.Set("output_cost_per_1m_tokens", "1.1")
+
+	updateReq := httptest.NewRequest(http.MethodPost, "/admin/models", strings.NewReader(updateForm.Encode()))
+	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	updateReq.Header.Set("X-Admin-Token", "super-secret")
+	updateResp := httptest.NewRecorder()
+	handler.ServeHTTP(updateResp, updateReq)
+
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("expected model update page, got %d", updateResp.Code)
+	}
+	updated := handler.currentModelCatalog()["qwen2.5"]
+	if updated.Name != "Qwen 2.5 Turbo" {
+		t.Fatalf("expected updated display name, got %q", updated.Name)
+	}
+	if len(updated.Backends) != 1 || updated.Backends[0].Backend != "edge" || updated.Backends[0].Weight != 3 {
+		t.Fatalf("expected updated backend refs, got %#v", updated.Backends)
+	}
+	if cfg.Pricing.Models["qwen2.5"].OutputCostPer1M != 1.1 {
+		t.Fatalf("expected updated pricing, got %#v", cfg.Pricing.Models["qwen2.5"])
+	}
+
+	deleteForm := url.Values{}
+	deleteForm.Set("action", "delete")
+	deleteForm.Set("model_name", "qwen2.5")
+	deleteReq := httptest.NewRequest(http.MethodPost, "/admin/models", strings.NewReader(deleteForm.Encode()))
+	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deleteReq.Header.Set("X-Admin-Token", "super-secret")
+	deleteResp := httptest.NewRecorder()
+	handler.ServeHTTP(deleteResp, deleteReq)
+
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected model delete page, got %d", deleteResp.Code)
+	}
+	if _, ok := handler.currentModelCatalog()["qwen2.5"]; ok {
+		t.Fatalf("expected model removed from catalog")
+	}
+	if _, ok := cfg.Pricing.Models["qwen2.5"]; ok {
+		t.Fatalf("expected model pricing removed")
+	}
+	if containsCSVValue(cfg.Users["alpha"].ModelAllow, "qwen2.5") {
+		t.Fatalf("expected model removed from alpha allow list")
+	}
+	if containsCSVValue(cfg.Users["beta"].ModelDeny, "qwen2.5") {
+		t.Fatalf("expected model removed from beta deny list")
+	}
+}

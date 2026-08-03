@@ -57,6 +57,7 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 			"trim":             trimText,
 			"add":              addInt,
 			"sub":              subInt,
+			"contains":         containsString,
 		}).ParseFS(dashboardFS, "templates/*.html")
 		if err != nil {
 			return nil, fmt.Errorf("parse dashboard templates: %w", err)
@@ -116,6 +117,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && path == "users" {
 		h.handleUserAction(w, r)
+		return
+	}
+	if r.Method == http.MethodPost && path == "models" {
+		h.handleModelAction(w, r)
 		return
 	}
 	if path == "login" {
@@ -218,15 +223,76 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
+	h.renderModelsPage(w, "", "")
+}
+
+func (h *Handler) renderModelsPage(w http.ResponseWriter, formError, formSuccess string) {
 	models := h.currentModelCatalog()
+	users := h.usersSnapshot()
+	allUsers := make([]string, 0, len(users))
+	for userID := range users {
+		allUsers = append(allUsers, userID)
+	}
+	sort.Strings(allUsers)
+
+	type modelView struct {
+		Name               string
+		DisplayName        string
+		BackendWeightsText string
+		InputCost          float64
+		OutputCost         float64
+		AccessUsers        []string
+		AccessUsersText    string
+		AccessLimited      bool
+	}
+
+	viewModels := make([]modelView, 0, len(models))
+	modelNames := make([]string, 0, len(models))
+	for modelName := range models {
+		modelNames = append(modelNames, modelName)
+	}
+	sort.Strings(modelNames)
+
+	for _, modelName := range modelNames {
+		entry := models[modelName]
+		allowedUsers := make([]string, 0, len(allUsers))
+		for _, userID := range allUsers {
+			if modelAccessibleForUser(users[userID], modelName) {
+				allowedUsers = append(allowedUsers, userID)
+			}
+		}
+		inputCost := 0.0
+		outputCost := 0.0
+		if mp, ok := h.cfg.Pricing.Models[modelName]; ok {
+			inputCost = mp.InputCostPer1M
+			outputCost = mp.OutputCostPer1M
+		}
+
+		viewModels = append(viewModels, modelView{
+			Name:               modelName,
+			DisplayName:        entry.Name,
+			BackendWeightsText: formatModelBackendRefs(entry.Backends),
+			InputCost:          inputCost,
+			OutputCost:         outputCost,
+			AccessUsers:        allowedUsers,
+			AccessUsersText:    strings.Join(allowedUsers, ", "),
+			AccessLimited:      len(allUsers) > 0 && len(allowedUsers) != len(allUsers),
+		})
+	}
+
 	data := map[string]any{
-		"Title":            "Models",
-		"Subtitle":         "Routing map from model aliases to backend targets.",
-		"Active":           "models",
-		"ContentBlock":     "content-models",
-		"Models":           models,
-		"Backends":         h.cfg.Backends,
-		"DisabledBackends": h.state.disabledBackends,
+		"Title":             "Models",
+		"Subtitle":          "Create and edit model routing, pricing, and user access policies.",
+		"Active":            "models",
+		"ContentBlock":      "content-models",
+		"Models":            viewModels,
+		"Backends":          h.cfg.Backends,
+		"AllUsers":          allUsers,
+		"DisabledBackends":  h.state.disabledBackends,
+		"DefaultInputCost":  h.cfg.Pricing.DefaultInputPer1M,
+		"DefaultOutputCost": h.cfg.Pricing.DefaultOutputPer1M,
+		"FormError":         formError,
+		"FormSuccess":       formSuccess,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "models.html", data); err != nil {
@@ -484,6 +550,197 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderUsersPage(w, rawKey, hash, "", fmt.Sprintf("User %q created.", userName))
+}
+
+func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.httpError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+
+	action := strings.TrimSpace(r.FormValue("action"))
+	modelName := strings.TrimSpace(r.FormValue("model_name"))
+	if modelName == "" {
+		h.renderModelsPage(w, "Model name is required.", "")
+		return
+	}
+
+	if action == "delete" {
+		if err := h.deleteModel(modelName); err != nil {
+			h.renderModelsPage(w, fmt.Sprintf("Failed to delete model %q: %v", modelName, err), "")
+			return
+		}
+		h.renderModelsPage(w, "", fmt.Sprintf("Model %q deleted.", modelName))
+		return
+	}
+
+	refs, err := parseModelBackendRefs(r.FormValue("backend_weights"), h.cfg.Backends)
+	if err != nil {
+		h.renderModelsPage(w, fmt.Sprintf("Invalid backend refs for model %q: %v", modelName, err), "")
+		return
+	}
+
+	entry := config.ModelEntry{
+		Name:     strings.TrimSpace(r.FormValue("display_name")),
+		Backends: refs,
+	}
+	if entry.Name == "" {
+		entry.Name = modelName
+	}
+
+	inputCost, outputCost, err := parseModelPricingForm(r)
+	if err != nil {
+		h.renderModelsPage(w, fmt.Sprintf("Invalid pricing for model %q: %v", modelName, err), "")
+		return
+	}
+
+	limitAccess := strings.EqualFold(strings.TrimSpace(r.FormValue("limit_access")), "on")
+	selectedUsers := make(map[string]bool)
+	for _, userID := range r.Form["user_access"] {
+		trimmed := strings.TrimSpace(userID)
+		if trimmed != "" {
+			selectedUsers[trimmed] = true
+		}
+	}
+
+	switch action {
+	case "create":
+		if err := h.createModel(modelName, entry); err != nil {
+			h.renderModelsPage(w, fmt.Sprintf("Failed to create model %q: %v", modelName, err), "")
+			return
+		}
+	case "update":
+		if err := h.updateModel(modelName, entry); err != nil {
+			h.renderModelsPage(w, fmt.Sprintf("Failed to update model %q: %v", modelName, err), "")
+			return
+		}
+	default:
+		h.renderModelsPage(w, "Unknown model action.", "")
+		return
+	}
+
+	h.setModelPricing(modelName, inputCost, outputCost)
+	if err := h.applyModelAccess(modelName, limitAccess, selectedUsers); err != nil {
+		h.renderModelsPage(w, fmt.Sprintf("Saved model %q but failed to apply user access: %v", modelName, err), "")
+		return
+	}
+
+	if action == "create" {
+		h.renderModelsPage(w, "", fmt.Sprintf("Model %q created.", modelName))
+		return
+	}
+	h.renderModelsPage(w, "", fmt.Sprintf("Model %q updated.", modelName))
+}
+
+func (h *Handler) createModel(modelName string, entry config.ModelEntry) error {
+	catalog := h.currentModelCatalog()
+	if _, exists := catalog[modelName]; exists {
+		return fmt.Errorf("model already exists")
+	}
+	catalog[modelName] = entry
+	h.syncModelToConfig(modelName, entry)
+	return nil
+}
+
+func (h *Handler) updateModel(modelName string, entry config.ModelEntry) error {
+	catalog := h.currentModelCatalog()
+	if _, exists := catalog[modelName]; !exists {
+		return fmt.Errorf("model not found")
+	}
+	catalog[modelName] = entry
+	h.syncModelToConfig(modelName, entry)
+	return nil
+}
+
+func (h *Handler) deleteModel(modelName string) error {
+	catalog := h.currentModelCatalog()
+	if _, exists := catalog[modelName]; !exists {
+		return fmt.Errorf("model not found")
+	}
+	delete(catalog, modelName)
+	if h.models != nil {
+		delete(h.models, modelName)
+	}
+	if h.cfg.Models.Models != nil {
+		delete(h.cfg.Models.Models, modelName)
+	}
+
+	if h.cfg.Pricing.Models != nil {
+		delete(h.cfg.Pricing.Models, modelName)
+	}
+
+	// Keep user policy clean by removing references to deleted models.
+	users := h.usersSnapshot()
+	for userID, uc := range users {
+		updated := false
+		allow := removeCSVValue(uc.ModelAllow, modelName)
+		if len(allow) != len(uc.ModelAllow) {
+			uc.ModelAllow = allow
+			updated = true
+		}
+		deny := removeCSVValue(uc.ModelDeny, modelName)
+		if len(deny) != len(uc.ModelDeny) {
+			uc.ModelDeny = deny
+			updated = true
+		}
+		if updated {
+			if err := h.authStore.UpdateUser(userID, uc); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (h *Handler) syncModelToConfig(modelName string, entry config.ModelEntry) {
+	if h.cfg.Models.Models == nil {
+		h.cfg.Models.Models = map[string]config.ModelEntry{}
+	}
+	h.cfg.Models.Models[modelName] = entry
+}
+
+func (h *Handler) setModelPricing(modelName string, inputCost, outputCost float64) {
+	if h.cfg.Pricing.Models == nil {
+		h.cfg.Pricing.Models = map[string]config.ModelPricing{}
+	}
+	if inputCost == 0 && outputCost == 0 {
+		delete(h.cfg.Pricing.Models, modelName)
+		return
+	}
+	h.cfg.Pricing.Models[modelName] = config.ModelPricing{
+		InputCostPer1M:  inputCost,
+		OutputCostPer1M: outputCost,
+	}
+}
+
+func (h *Handler) applyModelAccess(modelName string, limitAccess bool, selectedUsers map[string]bool) error {
+	users := h.usersSnapshot()
+	for userID, uc := range users {
+		allowModel := true
+		if limitAccess {
+			allowModel = selectedUsers[userID]
+		}
+
+		if allowModel {
+			uc.ModelDeny = removeCSVValue(uc.ModelDeny, modelName)
+			if len(uc.ModelAllow) > 0 && !containsCSVValue(uc.ModelAllow, modelName) {
+				uc.ModelAllow = append(uc.ModelAllow, modelName)
+			}
+		} else {
+			uc.ModelAllow = removeCSVValue(uc.ModelAllow, modelName)
+			if !containsCSVValue(uc.ModelDeny, modelName) {
+				uc.ModelDeny = append(uc.ModelDeny, modelName)
+			}
+		}
+
+		sort.Strings(uc.ModelAllow)
+		sort.Strings(uc.ModelDeny)
+		if err := h.authStore.UpdateUser(userID, uc); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handler) buildUserConfigFromForm(r *http.Request) (config.UserConfig, error) {
@@ -751,4 +1008,130 @@ func addInt(a, b int) int {
 
 func subInt(a, b int) int {
 	return a - b
+}
+
+func formatModelBackendRefs(refs []config.ModelBackendRef) string {
+	parts := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref.Backend == "" {
+			continue
+		}
+		weight := ref.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d", ref.Backend, weight))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func parseModelBackendRefs(input string, backends []config.Backend) ([]config.ModelBackendRef, error) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return nil, fmt.Errorf("at least one backend:weight pair is required")
+	}
+
+	validBackends := make(map[string]bool, len(backends))
+	for _, b := range backends {
+		validBackends[b.Name] = true
+	}
+
+	parts := strings.Split(trimmed, ",")
+	refs := make([]config.ModelBackendRef, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		pair := strings.SplitN(item, ":", 2)
+		if len(pair) != 2 {
+			return nil, fmt.Errorf("%q must use backend:weight format", item)
+		}
+		backendName := strings.TrimSpace(pair[0])
+		if backendName == "" {
+			return nil, fmt.Errorf("backend name cannot be empty")
+		}
+		if !validBackends[backendName] {
+			return nil, fmt.Errorf("backend %q does not exist", backendName)
+		}
+		weight, err := strconv.Atoi(strings.TrimSpace(pair[1]))
+		if err != nil || weight <= 0 {
+			return nil, fmt.Errorf("weight for backend %q must be a positive integer", backendName)
+		}
+		if seen[backendName] {
+			return nil, fmt.Errorf("backend %q is duplicated", backendName)
+		}
+		seen[backendName] = true
+		refs = append(refs, config.ModelBackendRef{Backend: backendName, Weight: weight})
+	}
+
+	if len(refs) == 0 {
+		return nil, fmt.Errorf("at least one backend:weight pair is required")
+	}
+	return refs, nil
+}
+
+func parseModelPricingForm(r *http.Request) (float64, float64, error) {
+	inputCost := 0.0
+	outputCost := 0.0
+
+	inputRaw := strings.TrimSpace(r.FormValue("input_cost_per_1m_tokens"))
+	if inputRaw != "" {
+		parsed, err := strconv.ParseFloat(inputRaw, 64)
+		if err != nil || parsed < 0 {
+			return 0, 0, fmt.Errorf("input cost must be a non-negative number")
+		}
+		inputCost = parsed
+	}
+
+	outputRaw := strings.TrimSpace(r.FormValue("output_cost_per_1m_tokens"))
+	if outputRaw != "" {
+		parsed, err := strconv.ParseFloat(outputRaw, 64)
+		if err != nil || parsed < 0 {
+			return 0, 0, fmt.Errorf("output cost must be a non-negative number")
+		}
+		outputCost = parsed
+	}
+
+	return inputCost, outputCost, nil
+}
+
+func modelAccessibleForUser(uc config.UserConfig, modelName string) bool {
+	if containsCSVValue(uc.ModelDeny, modelName) {
+		return false
+	}
+	if len(uc.ModelAllow) == 0 {
+		return true
+	}
+	return containsCSVValue(uc.ModelAllow, modelName)
+}
+
+func containsCSVValue(items []string, target string) bool {
+	for _, item := range items {
+		if strings.TrimSpace(item) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func removeCSVValue(items []string, target string) []string {
+	filtered := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item) == target {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
