@@ -7,6 +7,7 @@
   hx-target="#overview-results"
   hx-swap="outerHTML"
 >
+<div class="overview-pair">
 <div class="card">
   <h3>Usage Window</h3>
   <div class="window-switch" role="tablist" aria-label="Overview usage window">
@@ -41,6 +42,23 @@
   <p class="overview-updated">
     Last updated: <span class="mono">{{ .OverviewLastUpdated }}</span>
   </p>
+</div>
+<div class="card">
+  <h3>Backend Status</h3>
+  <ul class="stack-list">
+    {{ range .Backends }}
+    <li>
+      <strong class="mono">{{ .Name }}</strong>
+      <span
+        class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
+      >
+        {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end
+        }}
+      </span>
+    </li>
+    {{ end }}
+  </ul>
+</div>
 </div>
 <div class="cards">
   <div class="card">
@@ -89,22 +107,6 @@
   </ul>
 </div>
 {{ end }}
-<div class="card">
-  <h3>Backend Status</h3>
-  <ul class="stack-list">
-    {{ range .Backends }}
-    <li>
-      <strong class="mono">{{ .Name }}</strong>
-      <span
-        class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
-      >
-        {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end
-        }}
-      </span>
-    </li>
-    {{ end }}
-  </ul>
-</div>
 {{ if .Summary }}
 <div class="cards">
   <div class="card">
@@ -124,6 +126,10 @@
     <p class="metric">{{ formatCost (index .Summary "cost") }}</p>
   </div>
 </div>
+{{ end }}
+{{ if or .Summary .ConfigReloadStatus }}
+<div class="overview-pair">
+  {{ if .Summary }}
 <div class="card">
   <h3>Per-Model Cost</h3>
   <ul class="stack-list">
@@ -137,8 +143,8 @@
     {{ end }}
   </ul>
 </div>
-{{ end }}
-{{ if .ConfigReloadStatus }}
+  {{ end }}
+  {{ if .ConfigReloadStatus }}
 <div class="card">
   <h3>Config Reload</h3>
   <ul class="stack-list">
@@ -159,6 +165,8 @@
       <span class="list-meta mono">{{ index .ConfigReloadStatus "LastError" }}</span>
     </li>
   </ul>
+</div>
+  {{ end }}
 </div>
 {{ end }}
 {{ end }}

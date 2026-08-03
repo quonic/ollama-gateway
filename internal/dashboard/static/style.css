@@ -192,6 +192,17 @@ body.modal-open {
 	margin-bottom: 14px;
 }
 
+.overview-pair {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+	gap: 12px;
+	margin-bottom: 14px;
+}
+
+.overview-pair .card {
+	margin-bottom: 0;
+}
+
 .card {
 	background: var(--panel);
 	border: 1px solid var(--line);
@@ -716,6 +727,10 @@ button:hover {
 
 	.nav {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.overview-pair {
+		grid-template-columns: 1fr;
 	}
 
 	.card {
