@@ -18,6 +18,7 @@ This directory contains the specification documents for the Ollama Gateway proje
 | 10  | Runtime State Spec        | [`10-runtime-state-spec.md`](10-runtime-state-spec.md)           | In-memory vs persisted runtime state, admin-edit semantics, restart behavior, and concurrency expectations.                                                                                                                                           |
 | 11  | Config Contract Spec      | [`04-config-spec.md`](04-config-spec.md)                         | Full YAML schema, defaults, validation rules, and environment-variable override behavior.                                                                                                                                                             |
 | 12  | Data Model & Persistence  | [`05-data-model-spec.md`](05-data-model-spec.md)                 | Runtime structs, SQLite schema, migration expectations, and persistence boundaries.                                                                                                                                                                   |
+| 13  | Implementation Roadmap     | [`13-implementation-roadmap.md`](13-implementation-roadmap.md)     | Package-by-package implementation plan, delivery phases, and acceptance criteria for building the gateway.                                                                                                                                         |
 
 ## Reading Order Recommendation
 
@@ -27,4 +28,5 @@ This directory contains the specification documents for the Ollama Gateway proje
 4. Read `05-usage-tracking-spec.md` for what gets logged and how costs are calculated — this is informed by the token counts captured during proxying (described in spec 02).
 5. Read `04-config-spec.md` and `05-data-model-spec.md` next to lock in the implementation contract for configuration and persistence.
 6. Read `08-cli-lifecycle-spec.md`, `09-error-handling-spec.md`, and `10-runtime-state-spec.md` to define the operational behavior of the server.
-7. Finally read `07-dashboard-ui-spec.md` for the admin interface that surfaces all of the above data to operators.
+7. Use `13-implementation-roadmap.md` as the build plan that turns the specs into package-by-package implementation work.
+8. Finally read `07-dashboard-ui-spec.md` for the admin interface that surfaces all of the above data to operators.
