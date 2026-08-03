@@ -602,6 +602,9 @@ func TestLogsPartialRendersFragmentOnly(t *testing.T) {
 	if got := resp.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
 		t.Fatalf("expected text/html content type, got %q", got)
 	}
+	if got := resp.Header().Get("HX-Push-Url"); got != "/admin/logs" {
+		t.Fatalf("expected HX-Push-Url to point at canonical logs route, got %q", got)
+	}
 
 	body := resp.Body.String()
 	if !strings.Contains(body, "id=\"logs-results\"") {
@@ -675,6 +678,9 @@ func TestLogsPartialHonorsPaginationAndFilters(t *testing.T) {
 		if !strings.Contains(body, "Page 2") {
 			t.Fatalf("expected page indicator for page 2, got %q", body)
 		}
+		if got := resp.Header().Get("HX-Push-Url"); got != "/admin/logs?page=2" {
+			t.Fatalf("expected HX-Push-Url for page 2, got %q", got)
+		}
 		if !strings.Contains(body, "key-02") || !strings.Contains(body, "key-01") {
 			t.Fatalf("expected oldest records on page 2, got %q", body)
 		}
@@ -695,6 +701,9 @@ func TestLogsPartialHonorsPaginationAndFilters(t *testing.T) {
 		body := resp.Body.String()
 		if !strings.Contains(body, "value=\"beta\"") {
 			t.Fatalf("expected filter value to be preserved, got %q", body)
+		}
+		if got := resp.Header().Get("HX-Push-Url"); got != "/admin/logs?page=1&model=beta" {
+			t.Fatalf("expected HX-Push-Url for filtered request, got %q", got)
 		}
 		if !strings.Contains(body, ">beta<") {
 			t.Fatalf("expected beta model records in filtered response, got %q", body)

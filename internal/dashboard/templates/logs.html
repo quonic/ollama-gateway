@@ -50,6 +50,7 @@
       method="get"
       action="/admin/logs"
       hx-get="/admin/logs/partial"
+      hx-push-url="true"
       hx-target="#logs-results"
       hx-swap="outerHTML"
     >
@@ -105,6 +106,7 @@
       <a
         href="/admin/logs?page={{ sub .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
         hx-get="/admin/logs/partial?page={{ sub .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
+        hx-push-url="true"
         hx-target="#logs-results"
         hx-swap="outerHTML"
         >Previous</a
@@ -114,6 +116,7 @@
       <a
         href="/admin/logs?page={{ add .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
         hx-get="/admin/logs/partial?page={{ add .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
+        hx-push-url="true"
         hx-target="#logs-results"
         hx-swap="outerHTML"
         >Next</a

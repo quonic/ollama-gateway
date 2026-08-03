@@ -485,6 +485,7 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) renderLogsPartial(w http.ResponseWriter, r *http.Request) {
 	data := h.logsViewData(r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("HX-Push-Url", logsCanonicalURL(r))
 	if err := h.templates.ExecuteTemplate(w, "content-logs-fragment", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -529,6 +530,13 @@ func parseLogsListOptions(r *http.Request) usage.ListOptions {
 		Page:     page,
 		PageSize: 10,
 	}
+}
+
+func logsCanonicalURL(r *http.Request) string {
+	if r == nil || r.URL == nil || strings.TrimSpace(r.URL.RawQuery) == "" {
+		return "/admin/logs"
+	}
+	return "/admin/logs?" + r.URL.RawQuery
 }
 
 func (h *Handler) renderBackendHealth(w http.ResponseWriter, r *http.Request) {
