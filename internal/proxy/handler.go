@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -82,16 +83,45 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Step 4: Build and run the reverse proxy.
 	rp := h.buildReverseProxy(backend, startTime, sri)
+	if !h.canReachBackend(backend) {
+		writeJSONError(w, http.StatusBadGateway, "upstream backend request failed")
+		return
+	}
 
 	if sri != nil {
 		ctx := withStreamingInterceptor(r.Context(), sri)
 		r = r.WithContext(ctx)
 	}
 
+	// The reverse proxy may fail before writing a response body. Ensure the gateway returns
+	// a clear upstream error instead of silently leaving the client with an empty response.
 	rp.ServeHTTP(w, r)
 
 	// After the response completes (stream flushed or non-streaming body sent), log usage asynchronously.
 	h.logUsage(r.Context(), authCtx.KeyID, backend.URL.String(), startTime, modelName)
+}
+
+func (h *ProxyHandler) canReachBackend(backend *backends.Backend) bool {
+	if backend == nil || backend.URL == nil {
+		return false
+	}
+
+	host := backend.URL.Hostname()
+	port := backend.URL.Port()
+	if port == "" {
+		if backend.URL.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // resolveBackendPool resolves the requested model to a backend pool using per-user overrides derived from auth context.
@@ -144,6 +174,9 @@ func (h *ProxyHandler) buildReverseProxy(backend *backends.Backend, startTime ti
 		Transport: newTransport(backend),
 		ModifyResponse: func(resp *http.Response) error {
 			return h.modifyResponse(resp, startTime, sri)
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			writeJSONError(w, http.StatusBadGateway, "upstream backend request failed")
 		},
 	}
 	rp.FlushInterval = -1 // flush each chunk immediately for streaming passthrough

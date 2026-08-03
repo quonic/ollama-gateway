@@ -113,6 +113,10 @@ func extractNonStreamingUsage(body []byte) UsageStats {
 
 // writeJSONError writes a JSON error response in Ollama's format: {"error": "message"}.
 func writeJSONError(w http.ResponseWriter, statusCode int, message string) {
+	if sri, ok := w.(*streamingResponseInterceptor); ok {
+		w = sri.ResponseWriter
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_, _ = w.Write([]byte(`{"error":"` + message + `"}`))

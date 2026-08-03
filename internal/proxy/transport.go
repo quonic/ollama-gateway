@@ -15,13 +15,13 @@ const defaultTransportTimeout = 60 * time.Second
 // newTransport creates an http.Transport configured for proxying to Ollama backends.
 // It enables keep-alive connections, sets reasonable timeouts, and disables HTTP/2 so that
 // streaming responses (newline-delimited JSON) are flushed promptly without chunked encoding issues.
-func newTransport(backend *backends.Backend) *http.Transport {
+func newTransport(backend *backends.Backend) http.RoundTripper {
 	timeout := backend.Timeout
 	if timeout <= 0 {
 		timeout = defaultTransportTimeout
 	}
 
-	return &http.Transport{
+	base := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           newDialContext(timeout),
 		MaxIdleConns:          128,
@@ -32,6 +32,17 @@ func newTransport(backend *backends.Backend) *http.Transport {
 		ExpectContinueTimeout: 1 * time.Second,
 		ForceAttemptHTTP2:     false, // keep streaming simple; Ollama uses HTTP/1.1 chunked SSE-like format
 	}
+	return &gatewayRoundTripper{base: base, timeout: timeout}
+}
+
+// gatewayRoundTripper wraps the underlying transport and converts connection failures into a typed error.
+type gatewayRoundTripper struct {
+	base    http.RoundTripper
+	timeout time.Duration
+}
+
+func (g *gatewayRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return g.base.RoundTrip(req)
 }
 
 // newDialContext returns a dial function with the given timeout for TCP connections to backends.

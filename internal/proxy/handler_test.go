@@ -343,3 +343,37 @@ func TestProxyHandler_ServeHTTP_ProxiesToSelectedBackend(t *testing.T) {
 		t.Fatalf("expected request body to reach upstream, got %q", receivedModel)
 	}
 }
+
+func TestProxyHandler_ServeHTTP_ReturnsBadGatewayWhenBackendUnavailable(t *testing.T) {
+	cfg := &config.Config{
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:1", Weight: 1}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3": {Name: "llama3", Backends: []config.ModelBackendRef{{Backend: "local", Weight: 1}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+		HealthCheck: config.HealthCheckConfig{IntervalSeconds: 1, TimeoutSeconds: 1, UnhealthyThreshold: 1},
+	}
+
+	resolver, err := models.NewResolver(cfg)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+	authStore := auth.NewStore(cfg)
+	h := NewProxyHandler(resolver, nil, authStore)
+
+	body := `{"model":"llama3","prompt":"hi"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(body))
+	req.Header.Set("X-API-Key", "demo-key")
+	rec := httptest.NewRecorder()
+
+	authStore.Middleware(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "upstream") {
+		t.Fatalf("expected gateway error in body, got %q", rec.Body.String())
+	}
+}
