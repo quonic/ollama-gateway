@@ -37,8 +37,8 @@
   <ul class="stack-list">
     {{ range (index .Summary "modelBreakdown") }}
     <li>
-      <strong>{{ .Model }}</strong>
-      <span>{{ .Count }} requests · {{ formatCost .Cost }}</span>
+      <strong class="mono">{{ .Model }}</strong>
+      <span class="list-meta">{{ .Count }} requests · {{ formatCost .Cost }}</span>
     </li>
     {{ end }}
   </ul>
@@ -49,7 +49,7 @@
   <ul class="stack-list">
     {{ range .Backends }}
     <li>
-      <strong>{{ .Name }}</strong>
+      <strong class="mono">{{ .Name }}</strong>
       <span
         class="pill {{ if index $.DisabledBackends .Name }}disabled{{ else }}healthy{{ end }}"
       >

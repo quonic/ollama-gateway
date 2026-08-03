@@ -4,12 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Admin Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/admin/static/style.css" />
   </head>
   <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
     <div class="login-card">
+      <p class="eyebrow">Gateway Admin</p>
       <h1>Admin Login</h1>
       <p>Enter the configured admin token to access the dashboard.</p>
+      {{ if .Invalid }}
+      <p class="error">Token was invalid. Try again.</p>
+      {{ end }}
       <form method="post" action="/admin/login">
         <input
           type="password"

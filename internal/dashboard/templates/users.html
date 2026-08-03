@@ -1,15 +1,15 @@
 {{ define "content-users" }}
 <div class="card">
   <h3>Generate New API Key</h3>
-  <form method="post" action="/admin/users">
+  <form method="post" action="/admin/users" class="inline-form">
     <input type="hidden" name="action" value="generate" />
     <button type="submit">Generate New Key Hash</button>
   </form>
   {{ if .GeneratedKey }}
   <div class="generated-key">
     <h4>Generated API Key</h4>
-    <p><strong>Raw key:</strong> {{ .GeneratedKey }}</p>
-    <p><strong>sha256 hash:</strong> {{ .GeneratedHash }}</p>
+    <p><strong>Raw key:</strong> <span class="mono">{{ .GeneratedKey }}</span></p>
+    <p><strong>sha256 hash:</strong> <span class="mono">{{ .GeneratedHash }}</span></p>
     <p class="hint">
       Copy the raw key now — it will not be shown again. Paste the hash into
       config.yaml under a new API key entry.
@@ -22,8 +22,9 @@
   <ul class="stack-list">
     {{ range $id, $user := .Users }}
     <li>
-      <strong>{{ $id }}</strong> — {{ if ne $user.APIKeyHash "" }}hash
-      configured{{ else }}no hash{{ end }}
+      <strong class="mono">{{ $id }}</strong>
+      <span class="list-meta">{{ if ne $user.APIKeyHash "" }}hash
+      configured{{ else }}no hash{{ end }}</span>
     </li>
     {{ end }}
   </ul>

@@ -8,8 +8,10 @@
   <ul class="stack-list">
     {{ range $name, $entry := .Models }}
     <li>
-      <strong>{{ $name }}</strong> → {{ range $entry.Backends }}{{ .Backend }}
+      <strong class="mono">{{ $name }}</strong>
+      <span class="list-meta">{{ range $entry.Backends }}{{ .Backend }}
       {{ end }}
+      </span>
     </li>
     {{ end }}
   </ul>

@@ -29,8 +29,8 @@
     <ul class="stack-list">
       {{ range .Analytics.Models }}
       <li>
-        <strong>{{ .Model }}</strong>
-        <span>{{ .Count }} requests · {{ formatCost .Cost }}</span>
+        <strong class="mono">{{ .Model }}</strong>
+        <span class="list-meta">{{ .Count }} requests · {{ formatCost .Cost }}</span>
       </li>
       {{ end }}
     </ul>
@@ -58,7 +58,7 @@
       End
       <input type="datetime-local" name="end" value="{{ .Filters.End }}" />
     </label>
-    <button type="submit">Apply</button>
+    <button type="submit">Apply Filters</button>
   </form>
 </div>
 <div class="card">
@@ -91,7 +91,7 @@
       >Previous</a
     >
     {{ end }}
-    <span>Page {{ .Page }}</span>
+    <span class="page-indicator">Page {{ .Page }}</span>
     <a
       href="/admin/logs?page={{ add .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
       >Next</a

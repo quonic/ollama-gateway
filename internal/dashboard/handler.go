@@ -4,7 +4,9 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -163,6 +165,7 @@ func (h *Handler) renderLogin(w http.ResponseWriter, r *http.Request, invalid bo
 func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Overview",
+		"Subtitle":         "Live snapshot of gateway capacity, spend, and backend health.",
 		"Active":           "overview",
 		"ContentBlock":     "content-overview",
 		"BackendCount":     len(h.cfg.Backends),
@@ -186,6 +189,7 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Models",
+		"Subtitle":         "Routing map from model aliases to backend targets.",
 		"Active":           "models",
 		"ContentBlock":     "content-models",
 		"Models":           h.cfg.Models.Models,
@@ -201,6 +205,7 @@ func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Backends",
+		"Subtitle":         "Enable or disable backend pools without restarting the service.",
 		"Active":           "backends",
 		"ContentBlock":     "content-backends",
 		"Backends":         h.cfg.Backends,
@@ -215,6 +220,7 @@ func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Title":            "Users",
+		"Subtitle":         "Generate API keys and audit configured user identities.",
 		"Active":           "users",
 		"ContentBlock":     "content-users",
 		"Users":            h.cfg.Users,
@@ -245,6 +251,7 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	data := map[string]any{
 		"Title":            "Logs",
+		"Subtitle":         "Filter request history and inspect model-level usage trends.",
 		"Active":           "logs",
 		"ContentBlock":     "content-logs",
 		"DisabledBackends": h.state.disabledBackends,
@@ -321,6 +328,7 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 	hash := auth.HashAPIKey(rawKey)
 	data := map[string]any{
 		"Title":            "Users",
+		"Subtitle":         "Generate API keys and audit configured user identities.",
 		"Active":           "users",
 		"ContentBlock":     "content-users",
 		"Users":            h.cfg.Users,
@@ -335,12 +343,26 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveStatic(w http.ResponseWriter, path string) {
-	data, err := dashboardFS.ReadFile("static/" + strings.TrimPrefix(path, "static/"))
+	assetPath := "static/" + strings.TrimPrefix(path, "static/")
+	data, err := dashboardFS.ReadFile(assetPath)
 	if err != nil {
 		http.NotFound(w, nil)
 		return
 	}
-	w.Header().Set("Content-Type", http.DetectContentType(data))
+	ext := strings.ToLower(filepath.Ext(assetPath))
+	contentType := mime.TypeByExtension(ext)
+	if contentType == "" {
+		switch ext {
+		case ".css":
+			contentType = "text/css; charset=utf-8"
+		case ".js":
+			contentType = "application/javascript"
+		}
+	}
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(data)
 }
 

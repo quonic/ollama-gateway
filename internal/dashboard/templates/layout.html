@@ -4,14 +4,25 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ .Title }} - Ollama Gateway</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/admin/static/style.css">
     <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.js"></script>
   </head>
   <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
     <div class="shell">
       <aside class="sidebar">
-        <h1>Ollama Gateway</h1>
-        <nav>
+        <div class="brand">
+          <div class="brand-mark">OG</div>
+          <div>
+            <h1>Ollama Gateway</h1>
+            <p>Control panel</p>
+          </div>
+        </div>
+        <nav class="nav">
           <a class="nav-link {{ if eq .Active "overview" }}active{{ end }}" href="/admin/overview">Overview</a>
           <a class="nav-link {{ if eq .Active "models" }}active{{ end }}" href="/admin/models">Models</a>
           <a class="nav-link {{ if eq .Active "backends" }}active{{ end }}" href="/admin/backends">Backends</a>
@@ -21,22 +32,29 @@
       </aside>
       <main class="content">
         <header class="topbar">
-          <h2>{{ .Title }}</h2>
+          <div>
+            <h2>{{ .Title }}</h2>
+            {{ if .Subtitle }}
+            <p class="subtitle">{{ .Subtitle }}</p>
+            {{ end }}
+          </div>
           <a href="/admin/login" class="ghost-link">Logout</a>
         </header>
-        {{ if eq .Active "overview" }}
-        {{ template "content-overview" . }}
-        {{ else if eq .Active "models" }}
-        {{ template "content-models" . }}
-        {{ else if eq .Active "backends" }}
-        {{ template "content-backends" . }}
-        {{ else if eq .Active "users" }}
-        {{ template "content-users" . }}
-        {{ else if eq .Active "logs" }}
-        {{ template "content-logs" . }}
-        {{ else }}
-        {{ template "content-overview" . }}
-        {{ end }}
+        <section class="page-content">
+          {{ if eq .Active "overview" }}
+          {{ template "content-overview" . }}
+          {{ else if eq .Active "models" }}
+          {{ template "content-models" . }}
+          {{ else if eq .Active "backends" }}
+          {{ template "content-backends" . }}
+          {{ else if eq .Active "users" }}
+          {{ template "content-users" . }}
+          {{ else if eq .Active "logs" }}
+          {{ template "content-logs" . }}
+          {{ else }}
+          {{ template "content-overview" . }}
+          {{ end }}
+        </section>
       </main>
     </div>
   </body>
