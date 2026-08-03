@@ -170,7 +170,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.renderBackendHealth(w, r)
 	default:
 		if strings.HasPrefix(path, "backends/toggle/") {
-			h.handleBackendToggle(w, path)
+			h.handleBackendToggle(w, r, path)
 			return
 		}
 		h.renderOverview(w, r)
@@ -445,7 +445,7 @@ func (h *Handler) renderBackendHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) handleBackendToggle(w http.ResponseWriter, path string) {
+func (h *Handler) handleBackendToggle(w http.ResponseWriter, r *http.Request, path string) {
 	name := strings.TrimPrefix(path, "backends/toggle/")
 	if name == "" || name == "backends/toggle/" {
 		h.httpError(w, http.StatusBadRequest, "backend name required")
@@ -456,22 +456,34 @@ func (h *Handler) handleBackendToggle(w http.ResponseWriter, path string) {
 			if h.state.disabledBackends[name] {
 				delete(h.state.disabledBackends, name)
 				b.SetEnabled(true)
-				fmt.Fprintf(w, "Backend %q enabled", name)
+				h.respondBackendToggle(w, r, name, true)
 				return
 			}
 			h.state.disabledBackends[name] = true
 			b.SetEnabled(false)
-			fmt.Fprintf(w, "Backend %q disabled", name)
+			h.respondBackendToggle(w, r, name, false)
 			return
 		}
 	}
 	if h.state.disabledBackends[name] {
 		delete(h.state.disabledBackends, name)
-		fmt.Fprintf(w, "Backend %q enabled", name)
+		h.respondBackendToggle(w, r, name, true)
 		return
 	}
 	h.state.disabledBackends[name] = true
-	fmt.Fprintf(w, "Backend %q disabled", name)
+	h.respondBackendToggle(w, r, name, false)
+}
+
+func (h *Handler) respondBackendToggle(w http.ResponseWriter, r *http.Request, name string, enabled bool) {
+	status := "disabled"
+	if enabled {
+		status = "enabled"
+	}
+	if r != nil && r.Method == http.MethodPost {
+		http.Redirect(w, r, "/admin/backends", http.StatusSeeOther)
+		return
+	}
+	fmt.Fprintf(w, "Backend %q %s", name, status)
 }
 
 func (h *Handler) handleBackendAction(w http.ResponseWriter, r *http.Request) {

@@ -107,6 +107,42 @@ func TestBackendToggle(t *testing.T) {
 	}
 }
 
+func TestBackendToggle_PostRedirectsBackToBackendsPage(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local-gpu", URL: "http://127.0.0.1:11434"}},
+		Models:   config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local-gpu"}}}}},
+		Users:    map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	loginForm := url.Values{}
+	loginForm.Set("token", "super-secret")
+	loginReq := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(loginForm.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginResp := httptest.NewRecorder()
+	handler.ServeHTTP(loginResp, loginReq)
+	cookie := loginResp.Result().Cookies()[0]
+
+	request := httptest.NewRequest(http.MethodPost, "/admin/backends/toggle/local-gpu", nil)
+	request.AddCookie(cookie)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, request)
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after form toggle, got %d", resp.Code)
+	}
+	if location := resp.Header().Get("Location"); location != "/admin/backends" {
+		t.Fatalf("expected redirect to /admin/backends, got %q", location)
+	}
+	if !handler.state.disabledBackends["local-gpu"] {
+		t.Fatal("expected backend to be marked disabled after POST toggle")
+	}
+}
+
 func TestBackendToggle_UpdatesSharedManagerRouting(t *testing.T) {
 	cfg := &config.Config{
 		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
