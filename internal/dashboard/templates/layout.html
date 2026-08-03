@@ -57,6 +57,76 @@
         </section>
       </main>
     </div>
+    <script>
+      (() => {
+        let activeModal = null;
+        let lastTrigger = null;
+
+        const focusModal = (modal) => {
+          const firstFocusable = modal.querySelector(
+            'input, button, select, textarea, [tabindex]:not([tabindex="-1"])'
+          );
+          if (firstFocusable) {
+            firstFocusable.focus();
+          }
+        };
+
+        const closeModal = (modal) => {
+          if (!modal) {
+            return;
+          }
+          modal.setAttribute("hidden", "hidden");
+          document.body.classList.remove("modal-open");
+          activeModal = null;
+          if (lastTrigger) {
+            lastTrigger.focus();
+          }
+        };
+
+        const openModal = (modal, trigger) => {
+          if (!modal) {
+            return;
+          }
+          lastTrigger = trigger || null;
+          modal.removeAttribute("hidden");
+          document.body.classList.add("modal-open");
+          activeModal = modal;
+          focusModal(modal);
+        };
+
+        document.addEventListener("click", (event) => {
+          const openTrigger = event.target.closest(".js-open-modal");
+          if (openTrigger) {
+            const modal = document.getElementById(
+              openTrigger.dataset.modalTarget
+            );
+            openModal(modal, openTrigger);
+            return;
+          }
+
+          const closeTrigger = event.target.closest(".js-close-modal");
+          if (closeTrigger) {
+            const modal = closeTrigger.closest(".modal-backdrop");
+            closeModal(modal);
+            return;
+          }
+
+          if (
+            activeModal &&
+            event.target.classList &&
+            event.target.classList.contains("modal-backdrop")
+          ) {
+            closeModal(activeModal);
+          }
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && activeModal) {
+            closeModal(activeModal);
+          }
+        });
+      })();
+    </script>
   </body>
 </html>
 {{ end }}

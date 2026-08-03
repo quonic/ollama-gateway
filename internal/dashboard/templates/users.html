@@ -1,80 +1,30 @@
 {{ define "content-users" }}
 <div class="card">
-  <h3>Create User</h3>
-  <form method="post" action="/admin/users" class="inline-form">
-    <input type="hidden" name="action" value="create" />
-    <label for="user_name">User name</label>
-    <input
-      id="user_name"
-      name="user_name"
-      type="text"
-      placeholder="team-analytics"
-      required
-    />
-
-    <label for="create_model_allow">Model allow list (comma separated)</label>
-    <input
-      id="create_model_allow"
-      name="model_allow"
-      type="text"
-      placeholder="llama3.2, qwen2.5"
-    />
-
-    <label for="create_model_deny">Model deny list (comma separated)</label>
-    <input
-      id="create_model_deny"
-      name="model_deny"
-      type="text"
-      placeholder="phi3"
-    />
-
-    <label for="create_aliases">Aliases (alias:model, comma separated)</label>
-    <input
-      id="create_aliases"
-      name="aliases"
-      type="text"
-      placeholder="chat:llama3.2, coder:qwen2.5"
-    />
-
-    <label>
-      <input type="checkbox" name="rate_limit_enabled" />
-      Set custom rate limit for this user
-    </label>
-    <label for="create_rate_limit_rate">Rate (tokens/sec)</label>
-    <input
-      id="create_rate_limit_rate"
-      name="rate_limit_rate"
-      type="text"
-      placeholder="10.0"
-    />
-    <label for="create_rate_limit_burst">Burst</label>
-    <input
-      id="create_rate_limit_burst"
-      name="rate_limit_burst"
-      type="text"
-      placeholder="50"
-    />
-    <label for="create_rate_limit_ttl_seconds">Bucket TTL (seconds)</label>
-    <input
-      id="create_rate_limit_ttl_seconds"
-      name="rate_limit_ttl_seconds"
-      type="text"
-      placeholder="3600"
-    />
-
-    <button type="submit">Create User and Key</button>
-  </form>
+  <h3>User Management</h3>
+  <p class="hint">Create and manage API users with modal-based actions.</p>
   {{ if .FormError }}
   <p class="hint" style="color: #b91c1c"><strong>{{ .FormError }}</strong></p>
   {{ end }} {{ if .FormSuccess }}
   <p class="hint" style="color: #166534"><strong>{{ .FormSuccess }}</strong></p>
   {{ end }}
 
-  <h4 style="margin-top: 1.5rem">Generate Throwaway API Key</h4>
-  <form method="post" action="/admin/users" class="inline-form">
-    <input type="hidden" name="action" value="generate" />
-    <button type="submit">Generate New Key Hash</button>
-  </form>
+  <div class="page-actions">
+    <button
+      type="button"
+      class="js-open-modal"
+      data-modal-target="create-user-modal"
+    >
+      Create User
+    </button>
+    <button
+      type="button"
+      class="button-secondary js-open-modal"
+      data-modal-target="generate-key-modal"
+    >
+      Generate Throwaway Key
+    </button>
+  </div>
+
   {{ if .GeneratedKey }}
   <div class="generated-key">
     <h4>Generated API Key</h4>
@@ -91,142 +41,377 @@
 </div>
 <div class="card">
   <h3>Configured API Users</h3>
-  {{ range $user := .Users }}
-  <div class="generated-key" style="margin-bottom: 12px">
-    <h4 class="mono">{{ $user.ID }}</h4>
-    <p class="hint">
-      {{ if ne $user.Config.APIKeyHash "" }}hash configured{{ else }}no hash{{
-      end }}
-    </p>
+  <div class="crud-list">
+    {{ range $user := .Users }}
+    <div class="crud-row">
+      <div class="crud-primary">
+        <h4 class="mono">{{ $user.ID }}</h4>
+        <p class="hint">
+          {{ if ne $user.Config.APIKeyHash "" }}hash configured{{ else }}no
+          hash{{ end }}
+        </p>
 
-    <form
-      method="post"
-      action="/admin/users"
-      class="inline-form"
-      style="margin-top: 10px"
-    >
-      <input type="hidden" name="action" value="update" />
-      <input type="hidden" name="user_name" value="{{ $user.ID }}" />
+        {{ if $user.HasStats }}
+        <details>
+          <summary class="details-summary">Usage Snapshot</summary>
+          <div class="details-body">
+            <p class="hint" style="margin: 0 0 6px">
+              Requests: <strong>{{ $user.Stats.Requests }}</strong>
+            </p>
+            <p class="hint" style="margin: 0 0 6px">
+              Prompt tokens: <strong>{{ $user.Stats.PromptTokens }}</strong>
+            </p>
+            <p class="hint" style="margin: 0 0 6px">
+              Completion tokens:
+              <strong>{{ $user.Stats.CompletionTokens }}</strong>
+            </p>
+            <p class="hint" style="margin: 0 0 8px">
+              Total cost: <strong>{{ formatCost $user.Stats.Cost }}</strong>
+            </p>
 
-      <label for="allow_{{ $user.ID }}">Model allow list</label>
-      <input
-        id="allow_{{ $user.ID }}"
-        name="model_allow"
-        type="text"
-        value="{{ $user.AllowText }}"
-      />
-
-      <label for="deny_{{ $user.ID }}">Model deny list</label>
-      <input
-        id="deny_{{ $user.ID }}"
-        name="model_deny"
-        type="text"
-        value="{{ $user.DenyText }}"
-      />
-
-      <label for="aliases_{{ $user.ID }}">Aliases (alias:model)</label>
-      <input
-        id="aliases_{{ $user.ID }}"
-        name="aliases"
-        type="text"
-        value="{{ $user.AliasText }}"
-      />
-
-      <label>
-        <input
-          type="checkbox"
-          name="rate_limit_enabled"
-          {{
-          if
-          $user.Config.RateLimit
-          }}checked{{
-          end
-          }}
-        />
-        Custom rate limit enabled
-      </label>
-      <label for="rate_{{ $user.ID }}">Rate (tokens/sec)</label>
-      <input
-        id="rate_{{ $user.ID }}"
-        name="rate_limit_rate"
-        type="text"
-        value="{{ $user.Rate }}"
-      />
-      <label for="burst_{{ $user.ID }}">Burst</label>
-      <input
-        id="burst_{{ $user.ID }}"
-        name="rate_limit_burst"
-        type="text"
-        value="{{ $user.Burst }}"
-      />
-      <label for="ttl_{{ $user.ID }}">Bucket TTL (seconds)</label>
-      <input
-        id="ttl_{{ $user.ID }}"
-        name="rate_limit_ttl_seconds"
-        type="text"
-        value="{{ $user.TTLSeconds }}"
-      />
-
-      <button type="submit">Save User Settings</button>
-    </form>
-
-    <form
-      method="post"
-      action="/admin/users"
-      class="inline-form"
-      style="margin-top: 8px"
-    >
-      <input type="hidden" name="action" value="rotate" />
-      <input type="hidden" name="user_name" value="{{ $user.ID }}" />
-      <button type="submit">Rotate API Key</button>
-    </form>
-
-    <form
-      method="post"
-      action="/admin/users"
-      class="inline-form"
-      style="margin-top: 8px"
-      onsubmit="return confirm('Deactivate user {{ $user.ID }}? Their current API key will stop working immediately.')"
-    >
-      <input type="hidden" name="action" value="deactivate" />
-      <input type="hidden" name="user_name" value="{{ $user.ID }}" />
-      <button type="submit">Deactivate User</button>
-    </form>
-
-    {{ if $user.HasStats }}
-    <div style="margin-top: 12px">
-      <h5 style="margin: 0 0 8px">Usage Snapshot</h5>
-      <p class="hint" style="margin: 0 0 6px">
-        Requests: <strong>{{ $user.Stats.Requests }}</strong>
-      </p>
-      <p class="hint" style="margin: 0 0 6px">
-        Prompt tokens: <strong>{{ $user.Stats.PromptTokens }}</strong>
-      </p>
-      <p class="hint" style="margin: 0 0 6px">
-        Completion tokens: <strong>{{ $user.Stats.CompletionTokens }}</strong>
-      </p>
-      <p class="hint" style="margin: 0 0 8px">
-        Total cost: <strong>{{ formatCost $user.Stats.Cost }}</strong>
-      </p>
-
-      {{ if gt (len $user.Stats.TopModels) 0 }}
-      <p class="hint" style="margin: 0 0 6px">
-        <strong>Top Models by Spend</strong>
-      </p>
-      <ul class="stack-list" style="margin-top: 0">
-        {{ range $model := $user.Stats.TopModels }}
-        <li>
-          <span class="mono">{{ $model.Model }}</span>
-          <span class="list-meta"
-            >{{ $model.Count }} req · {{ formatCost $model.Cost }}</span
-          >
-        </li>
+            {{ if gt (len $user.Stats.TopModels) 0 }}
+            <p class="hint" style="margin: 0 0 6px">
+              <strong>Top Models by Spend</strong>
+            </p>
+            <ul class="stack-list" style="margin-top: 0">
+              {{ range $model := $user.Stats.TopModels }}
+              <li>
+                <span class="mono">{{ $model.Model }}</span>
+                <span class="list-meta"
+                  >{{ $model.Count }} req · {{ formatCost $model.Cost }}</span
+                >
+              </li>
+              {{ end }}
+            </ul>
+            {{ end }}
+          </div>
+        </details>
         {{ end }}
-      </ul>
-      {{ end }}
+      </div>
+      <div class="crud-actions">
+        <button
+          type="button"
+          class="button-secondary button-small js-open-modal"
+          data-modal-target="edit-user-{{ $user.ID }}"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          class="button-secondary button-small js-open-modal"
+          data-modal-target="rotate-user-{{ $user.ID }}"
+        >
+          Rotate Key
+        </button>
+        <button
+          type="button"
+          class="button-danger button-small js-open-modal"
+          data-modal-target="deactivate-user-{{ $user.ID }}"
+        >
+          Deactivate
+        </button>
+      </div>
     </div>
+
+    <div id="edit-user-{{ $user.ID }}" class="modal-backdrop" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-user-title-{{ $user.ID }}"
+      >
+        <div class="modal-header">
+          <div>
+            <h4 id="edit-user-title-{{ $user.ID }}">Edit User</h4>
+            <p class="hint">
+              Update settings for <span class="mono">{{ $user.ID }}</span>.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="modal-close js-close-modal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body">
+          <form method="post" action="/admin/users" class="inline-form">
+            <input type="hidden" name="action" value="update" />
+            <input type="hidden" name="user_name" value="{{ $user.ID }}" />
+
+            <label for="allow_{{ $user.ID }}">Model allow list</label>
+            <input
+              id="allow_{{ $user.ID }}"
+              name="model_allow"
+              type="text"
+              value="{{ $user.AllowText }}"
+            />
+
+            <label for="deny_{{ $user.ID }}">Model deny list</label>
+            <input
+              id="deny_{{ $user.ID }}"
+              name="model_deny"
+              type="text"
+              value="{{ $user.DenyText }}"
+            />
+
+            <label for="aliases_{{ $user.ID }}">Aliases (alias:model)</label>
+            <input
+              id="aliases_{{ $user.ID }}"
+              name="aliases"
+              type="text"
+              value="{{ $user.AliasText }}"
+            />
+
+            <label class="inline-checkbox">
+              <input
+                type="checkbox"
+                name="rate_limit_enabled"
+                {{
+                if
+                $user.Config.RateLimit
+                }}checked{{
+                end
+                }}
+              />
+              Custom rate limit enabled
+            </label>
+            <label for="rate_{{ $user.ID }}">Rate (tokens/sec)</label>
+            <input
+              id="rate_{{ $user.ID }}"
+              name="rate_limit_rate"
+              type="text"
+              value="{{ $user.Rate }}"
+            />
+            <label for="burst_{{ $user.ID }}">Burst</label>
+            <input
+              id="burst_{{ $user.ID }}"
+              name="rate_limit_burst"
+              type="text"
+              value="{{ $user.Burst }}"
+            />
+            <label for="ttl_{{ $user.ID }}">Bucket TTL (seconds)</label>
+            <input
+              id="ttl_{{ $user.ID }}"
+              name="rate_limit_ttl_seconds"
+              type="text"
+              value="{{ $user.TTLSeconds }}"
+            />
+
+            <div class="modal-actions">
+              <button type="button" class="button-secondary js-close-modal">
+                Cancel
+              </button>
+              <button type="submit">Save User</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div id="rotate-user-{{ $user.ID }}" class="modal-backdrop" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rotate-user-title-{{ $user.ID }}"
+      >
+        <div class="modal-header">
+          <h4 id="rotate-user-title-{{ $user.ID }}">Rotate API Key</h4>
+          <button
+            type="button"
+            class="modal-close js-close-modal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="hint">
+            Rotate key for <span class="mono">{{ $user.ID }}</span>? The current
+            key will stop working immediately.
+          </p>
+          <form method="post" action="/admin/users" class="inline-form">
+            <input type="hidden" name="action" value="rotate" />
+            <input type="hidden" name="user_name" value="{{ $user.ID }}" />
+            <div class="modal-actions">
+              <button type="button" class="button-secondary js-close-modal">
+                Cancel
+              </button>
+              <button type="submit">Rotate API Key</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div id="deactivate-user-{{ $user.ID }}" class="modal-backdrop" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="deactivate-user-title-{{ $user.ID }}"
+      >
+        <div class="modal-header">
+          <h4 id="deactivate-user-title-{{ $user.ID }}">Deactivate User</h4>
+          <button
+            type="button"
+            class="modal-close js-close-modal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="hint">
+            Deactivate <span class="mono">{{ $user.ID }}</span>? Their current
+            API key will stop working immediately.
+          </p>
+          <form method="post" action="/admin/users" class="inline-form">
+            <input type="hidden" name="action" value="deactivate" />
+            <input type="hidden" name="user_name" value="{{ $user.ID }}" />
+            <div class="modal-actions">
+              <button type="button" class="button-secondary js-close-modal">
+                Cancel
+              </button>
+              <button type="submit" class="button-danger">
+                Deactivate User
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    {{ else }}
+    <p class="hint">No users configured yet.</p>
     {{ end }}
   </div>
-  {{ end }}
+</div>
+
+<div id="create-user-modal" class="modal-backdrop" hidden>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="create-user-title"
+  >
+    <div class="modal-header">
+      <h4 id="create-user-title">Create User</h4>
+      <button
+        type="button"
+        class="modal-close js-close-modal"
+        aria-label="Close"
+      >
+        &times;
+      </button>
+    </div>
+    <div class="modal-body">
+      <form method="post" action="/admin/users" class="inline-form">
+        <input type="hidden" name="action" value="create" />
+        <label for="user_name">User name</label>
+        <input
+          id="user_name"
+          name="user_name"
+          type="text"
+          placeholder="team-analytics"
+          required
+        />
+
+        <label for="create_model_allow"
+          >Model allow list (comma separated)</label
+        >
+        <input
+          id="create_model_allow"
+          name="model_allow"
+          type="text"
+          placeholder="llama3.2, qwen2.5"
+        />
+
+        <label for="create_model_deny">Model deny list (comma separated)</label>
+        <input
+          id="create_model_deny"
+          name="model_deny"
+          type="text"
+          placeholder="phi3"
+        />
+
+        <label for="create_aliases"
+          >Aliases (alias:model, comma separated)</label
+        >
+        <input
+          id="create_aliases"
+          name="aliases"
+          type="text"
+          placeholder="chat:llama3.2, coder:qwen2.5"
+        />
+
+        <label class="inline-checkbox">
+          <input type="checkbox" name="rate_limit_enabled" />
+          Set custom rate limit for this user
+        </label>
+        <label for="create_rate_limit_rate">Rate (tokens/sec)</label>
+        <input
+          id="create_rate_limit_rate"
+          name="rate_limit_rate"
+          type="text"
+          placeholder="10.0"
+        />
+        <label for="create_rate_limit_burst">Burst</label>
+        <input
+          id="create_rate_limit_burst"
+          name="rate_limit_burst"
+          type="text"
+          placeholder="50"
+        />
+        <label for="create_rate_limit_ttl_seconds">Bucket TTL (seconds)</label>
+        <input
+          id="create_rate_limit_ttl_seconds"
+          name="rate_limit_ttl_seconds"
+          type="text"
+          placeholder="3600"
+        />
+
+        <div class="modal-actions">
+          <button type="button" class="button-secondary js-close-modal">
+            Cancel
+          </button>
+          <button type="submit">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div id="generate-key-modal" class="modal-backdrop" hidden>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="generate-key-title"
+  >
+    <div class="modal-header">
+      <h4 id="generate-key-title">Generate Throwaway API Key</h4>
+      <button
+        type="button"
+        class="modal-close js-close-modal"
+        aria-label="Close"
+      >
+        &times;
+      </button>
+    </div>
+    <div class="modal-body">
+      <p class="hint">This key is shown once and is not bound to a user.</p>
+      <form method="post" action="/admin/users" class="inline-form">
+        <input type="hidden" name="action" value="generate" />
+        <div class="modal-actions">
+          <button type="button" class="button-secondary js-close-modal">
+            Cancel
+          </button>
+          <button type="submit">Generate Key</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 {{ end }} {{ define "users.html" }}{{ template "layout.html" . }}{{ end }}

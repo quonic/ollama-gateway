@@ -12,171 +12,308 @@
     <strong>{{ .FormSuccess }}</strong>
   </p>
   {{ end }}
-</div>
 
-<div class="card">
-  <h3>Create Backend</h3>
-  <form method="post" action="/admin/backends" class="inline-form">
-    <input type="hidden" name="action" value="create" />
-
-    <label for="create_backend_name">Name</label>
-    <input
-      id="create_backend_name"
-      name="backend_name"
-      type="text"
-      placeholder="edge-us-east"
-      required
-    />
-
-    <label for="create_backend_url">URL</label>
-    <input
-      id="create_backend_url"
-      name="backend_url"
-      type="text"
-      placeholder="http://127.0.0.1:11434"
-      required
-    />
-
-    <label for="create_backend_weight">Weight</label>
-    <input
-      id="create_backend_weight"
-      name="backend_weight"
-      type="text"
-      placeholder="1"
-      required
-    />
-
-    <label for="create_backend_timeout">Timeout (seconds)</label>
-    <input
-      id="create_backend_timeout"
-      name="backend_timeout_seconds"
-      type="text"
-      placeholder="120"
-      required
-    />
-
-    <label for="create_backend_health">Health check path</label>
-    <input
-      id="create_backend_health"
-      name="backend_health_path"
-      type="text"
-      placeholder="/api/version"
-      required
-    />
-
-    <label for="create_backend_tag">Tag (optional)</label>
-    <input
-      id="create_backend_tag"
-      name="backend_tag"
-      type="text"
-      placeholder="gpu-a10"
-    />
-
-    <button type="submit">Create Backend</button>
-  </form>
+  <div class="page-actions">
+    <button
+      type="button"
+      class="js-open-modal"
+      data-modal-target="create-backend-modal"
+    >
+      Create Backend
+    </button>
+  </div>
 </div>
 
 <div class="card">
   <h3>Configured Backends</h3>
-  {{ range .Backends }}
-  <div class="generated-key" style="margin-bottom: 12px">
-    <h4 class="mono">{{ .Name }}</h4>
-    <p class="hint">URL: {{ .URL }}</p>
-    <p class="hint">
-      Status: {{ if index $.DisabledBackends .Name }}disabled{{ else }}enabled{{
-      end }} ·
-      <a class="inline-action" href="/admin/backends/toggle/{{ .Name }}"
-        >toggle drain state</a
+  <div class="crud-list">
+    {{ range .Backends }}
+    <div class="crud-row">
+      <div class="crud-primary">
+        <h4 class="mono">{{ .Name }}</h4>
+        <p class="hint">URL: {{ .URL }}</p>
+        <p class="hint">
+          Status: {{ if index $.DisabledBackends .Name }}disabled{{ else
+          }}enabled{{ end }}
+        </p>
+      </div>
+      <div class="crud-actions">
+        <button
+          type="button"
+          class="button-secondary button-small js-open-modal"
+          data-modal-target="edit-backend-{{ .Name }}"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          class="button-secondary button-small js-open-modal"
+          data-modal-target="toggle-backend-{{ .Name }}"
+        >
+          Toggle
+        </button>
+        <button
+          type="button"
+          class="button-danger button-small js-open-modal"
+          data-modal-target="remove-backend-{{ .Name }}"
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+
+    <div id="edit-backend-{{ .Name }}" class="modal-backdrop" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-backend-title-{{ .Name }}"
       >
-    </p>
+        <div class="modal-header">
+          <div>
+            <h4 id="edit-backend-title-{{ .Name }}">Edit Backend</h4>
+            <p class="hint">
+              Update settings for <span class="mono">{{ .Name }}</span>.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="modal-close js-close-modal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body">
+          <form method="post" action="/admin/backends" class="inline-form">
+            <input type="hidden" name="action" value="update" />
+            <input type="hidden" name="backend_name" value="{{ .Name }}" />
 
-    <form
-      method="post"
-      action="/admin/backends"
-      class="inline-form"
-      style="margin-top: 10px"
-    >
-      <input type="hidden" name="action" value="update" />
-      <input type="hidden" name="backend_name" value="{{ .Name }}" />
+            <label for="url_{{ .Name }}">URL</label>
+            <input
+              id="url_{{ .Name }}"
+              name="backend_url"
+              type="text"
+              value="{{ .URL }}"
+            />
 
-      <label for="url_{{ .Name }}">URL</label>
-      <input
-        id="url_{{ .Name }}"
-        name="backend_url"
-        type="text"
-        value="{{ .URL }}"
-      />
+            <label for="weight_{{ .Name }}">Weight</label>
+            <input
+              id="weight_{{ .Name }}"
+              name="backend_weight"
+              type="text"
+              value="{{ .Weight }}"
+            />
 
-      <label for="weight_{{ .Name }}">Weight</label>
-      <input
-        id="weight_{{ .Name }}"
-        name="backend_weight"
-        type="text"
-        value="{{ .Weight }}"
-      />
+            <label for="timeout_{{ .Name }}">Timeout (seconds)</label>
+            <input
+              id="timeout_{{ .Name }}"
+              name="backend_timeout_seconds"
+              type="text"
+              value="{{ .Timeout.Seconds }}"
+            />
 
-      <label for="timeout_{{ .Name }}">Timeout (seconds)</label>
-      <input
-        id="timeout_{{ .Name }}"
-        name="backend_timeout_seconds"
-        type="text"
-        value="{{ .Timeout.Seconds }}"
-      />
+            <label for="health_{{ .Name }}">Health check path</label>
+            <input
+              id="health_{{ .Name }}"
+              name="backend_health_path"
+              type="text"
+              value="{{ .HealthCheckPath }}"
+            />
 
-      <label for="health_{{ .Name }}">Health check path</label>
-      <input
-        id="health_{{ .Name }}"
-        name="backend_health_path"
-        type="text"
-        value="{{ .HealthCheckPath }}"
-      />
+            <label for="tag_{{ .Name }}">Tag</label>
+            <input
+              id="tag_{{ .Name }}"
+              name="backend_tag"
+              type="text"
+              value="{{ .Tag }}"
+            />
 
-      <label for="tag_{{ .Name }}">Tag</label>
-      <input
-        id="tag_{{ .Name }}"
-        name="backend_tag"
-        type="text"
-        value="{{ .Tag }}"
-      />
+            <div class="modal-actions">
+              <button type="button" class="button-secondary js-close-modal">
+                Cancel
+              </button>
+              <button type="submit">Save Backend</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
 
-      <button type="submit">Save Backend Settings</button>
-    </form>
-
-    {{ if eq $.PendingRemove .Name }}
-    <form
-      method="post"
-      action="/admin/backends"
-      class="inline-form"
-      style="margin-top: 8px"
-    >
-      <input type="hidden" name="action" value="remove-confirm" />
-      <input type="hidden" name="backend_name" value="{{ .Name }}" />
-      <label for="confirm_{{ .Name }}"
-        >Type <span class="mono">{{ .Name }}</span> to confirm hard
-        removal</label
+    <div id="toggle-backend-{{ .Name }}" class="modal-backdrop" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="toggle-backend-title-{{ .Name }}"
       >
-      <input
-        id="confirm_{{ .Name }}"
-        name="confirm_backend_name"
-        type="text"
-        placeholder="{{ .Name }}"
-        required
-      />
-      <button type="submit">Confirm Remove Backend</button>
-    </form>
+        <div class="modal-header">
+          <h4 id="toggle-backend-title-{{ .Name }}">
+            Toggle Backend Drain State
+          </h4>
+          <button
+            type="button"
+            class="modal-close js-close-modal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="hint">
+            {{ if index $.DisabledBackends .Name }}Enable{{ else }}Disable{{ end
+            }} <span class="mono">{{ .Name }}</span> for routing?
+          </p>
+          <form
+            method="post"
+            action="/admin/backends/toggle/{{ .Name }}"
+            class="inline-form"
+          >
+            <div class="modal-actions">
+              <button type="button" class="button-secondary js-close-modal">
+                Cancel
+              </button>
+              <button type="submit">
+                {{ if index $.DisabledBackends .Name }}Enable{{ else }}Disable{{
+                end }} Backend
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div id="remove-backend-{{ .Name }}" class="modal-backdrop" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="remove-backend-title-{{ .Name }}"
+      >
+        <div class="modal-header">
+          <h4 id="remove-backend-title-{{ .Name }}">Remove Backend</h4>
+          <button
+            type="button"
+            class="modal-close js-close-modal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="hint">
+            Remove <span class="mono">{{ .Name }}</span>? Removal is blocked if
+            models still reference this backend.
+          </p>
+          <form method="post" action="/admin/backends" class="inline-form">
+            <input type="hidden" name="action" value="remove-confirm" />
+            <input type="hidden" name="backend_name" value="{{ .Name }}" />
+            <input
+              type="hidden"
+              name="confirm_backend_name"
+              value="{{ .Name }}"
+            />
+            <div class="modal-actions">
+              <button type="button" class="button-secondary js-close-modal">
+                Cancel
+              </button>
+              <button type="submit" class="button-danger">
+                Remove Backend
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
     {{ else }}
-    <form
-      method="post"
-      action="/admin/backends"
-      class="inline-form"
-      style="margin-top: 8px"
-    >
-      <input type="hidden" name="action" value="remove-intent" />
-      <input type="hidden" name="backend_name" value="{{ .Name }}" />
-      <button type="submit">Remove Backend</button>
-    </form>
+    <p class="hint">No backends configured yet.</p>
     {{ end }}
   </div>
-  {{ end }}
+</div>
+
+<div id="create-backend-modal" class="modal-backdrop" hidden>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="create-backend-title"
+  >
+    <div class="modal-header">
+      <h4 id="create-backend-title">Create Backend</h4>
+      <button
+        type="button"
+        class="modal-close js-close-modal"
+        aria-label="Close"
+      >
+        &times;
+      </button>
+    </div>
+    <div class="modal-body">
+      <form method="post" action="/admin/backends" class="inline-form">
+        <input type="hidden" name="action" value="create" />
+
+        <label for="create_backend_name">Name</label>
+        <input
+          id="create_backend_name"
+          name="backend_name"
+          type="text"
+          placeholder="edge-us-east"
+          required
+        />
+
+        <label for="create_backend_url">URL</label>
+        <input
+          id="create_backend_url"
+          name="backend_url"
+          type="text"
+          placeholder="http://127.0.0.1:11434"
+          required
+        />
+
+        <label for="create_backend_weight">Weight</label>
+        <input
+          id="create_backend_weight"
+          name="backend_weight"
+          type="text"
+          placeholder="1"
+          required
+        />
+
+        <label for="create_backend_timeout">Timeout (seconds)</label>
+        <input
+          id="create_backend_timeout"
+          name="backend_timeout_seconds"
+          type="text"
+          placeholder="120"
+          required
+        />
+
+        <label for="create_backend_health">Health check path</label>
+        <input
+          id="create_backend_health"
+          name="backend_health_path"
+          type="text"
+          placeholder="/api/version"
+          required
+        />
+
+        <label for="create_backend_tag">Tag (optional)</label>
+        <input
+          id="create_backend_tag"
+          name="backend_tag"
+          type="text"
+          placeholder="gpu-a10"
+        />
+
+        <div class="modal-actions">
+          <button type="button" class="button-secondary js-close-modal">
+            Cancel
+          </button>
+          <button type="submit">Create Backend</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 {{ end }} {{ define "backends.html" }}{{ template "layout.html" . }}{{ end }}

@@ -32,6 +32,10 @@ body {
 	position: relative;
 }
 
+body.modal-open {
+	overflow: hidden;
+}
+
 .bg-shape {
 	position: fixed;
 	border-radius: 999px;
@@ -316,6 +320,185 @@ button:hover {
 	margin-bottom: 8px;
 }
 
+.page-actions {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-top: 12px;
+}
+
+.crud-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.crud-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--panel-soft);
+}
+
+.crud-primary {
+	min-width: 0;
+	flex: 1;
+}
+
+.crud-primary .hint {
+	margin: 4px 0 0;
+}
+
+.crud-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.button-secondary {
+	background: #f4e7d9;
+	color: #7e341f;
+	border: 1px solid #ddc5ad;
+	box-shadow: none;
+}
+
+.button-secondary:hover {
+	box-shadow: none;
+	background: #efdcc9;
+}
+
+.button-danger {
+	background: #d44e2b;
+	color: #fff5f0;
+	box-shadow: none;
+}
+
+.button-danger:hover {
+	box-shadow: none;
+	background: #ba3e1f;
+}
+
+.button-small {
+	padding: 7px 10px;
+	font-size: 0.88rem;
+}
+
+.inline-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 8px 0;
+}
+
+.inline-checkbox input {
+	width: auto;
+}
+
+.checklist {
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 8px;
+	max-height: 160px;
+	overflow: auto;
+	margin: 8px 0;
+	background: var(--panel);
+}
+
+.checklist label {
+	display: block;
+	margin: 4px 0;
+	font-size: 0.9rem;
+	color: var(--ink);
+}
+
+.modal-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(20, 33, 43, 0.52);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+	z-index: 1000;
+}
+
+.modal-backdrop[hidden] {
+	display: none;
+}
+
+.modal-card {
+	width: min(640px, 100%);
+	max-height: calc(100vh - 40px);
+	overflow: auto;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 14px;
+	box-shadow: var(--shadow);
+	padding: 16px;
+	animation: rise-in 0.24s ease;
+}
+
+.modal-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.modal-header h4 {
+	margin: 0;
+}
+
+.modal-body {
+	margin-top: 8px;
+}
+
+.modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 12px;
+	flex-wrap: wrap;
+}
+
+.modal-close {
+	border: 0;
+	background: transparent;
+	color: var(--muted);
+	padding: 2px 8px;
+	font-size: 1.3rem;
+	line-height: 1;
+	box-shadow: none;
+}
+
+.modal-close:hover {
+	background: #f8ede0;
+	border-radius: 8px;
+	transform: none;
+	box-shadow: none;
+}
+
+.details-summary {
+	cursor: pointer;
+	font-weight: 600;
+	color: var(--accent-strong);
+	margin-top: 8px;
+}
+
+.details-body {
+	margin-top: 8px;
+	padding: 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+}
+
 .filters {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -501,5 +684,21 @@ button:hover {
 
 	.pagination {
 		flex-wrap: wrap;
+	}
+
+	.modal-backdrop {
+		padding: 12px;
+	}
+
+	.modal-card {
+		padding: 14px;
+	}
+
+	.crud-row {
+		flex-direction: column;
+	}
+
+	.crud-actions {
+		justify-content: flex-start;
 	}
 }
