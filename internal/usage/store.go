@@ -222,16 +222,25 @@ type ListOptions struct {
 	PageSize int
 }
 
+// OverviewOptions describes optional time bounds for overview summary queries.
+type OverviewOptions struct {
+	Start string
+	End   string
+}
+
 // OverviewSummary returns aggregate usage totals for the dashboard overview.
-func (s *Store) OverviewSummary() (OverviewSummary, error) {
+func (s *Store) OverviewSummary(opts OverviewOptions) (OverviewSummary, error) {
 	var summary OverviewSummary
-	err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0) FROM usage_records`).Scan(&summary.Requests, &summary.PromptTokens, &summary.CompletionTokens, &summary.Cost)
+	where, args := overviewWhereClause(opts)
+	err := s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0) FROM usage_records`+where, args...).Scan(&summary.Requests, &summary.PromptTokens, &summary.CompletionTokens, &summary.Cost)
 	return summary, err
 }
 
 // ModelCostBreakdown returns per-model request counts and total cost for the dashboard.
-func (s *Store) ModelCostBreakdown(limit int) ([]ModelCostBreakdown, error) {
-	rows, err := s.db.Query(`SELECT model, COUNT(*), COALESCE(SUM(cost_usd),0) FROM usage_records GROUP BY model ORDER BY SUM(cost_usd) DESC, model LIMIT ?`, limit)
+func (s *Store) ModelCostBreakdown(limit int, opts OverviewOptions) ([]ModelCostBreakdown, error) {
+	where, args := overviewWhereClause(opts)
+	args = append(args, limit)
+	rows, err := s.db.Query(`SELECT model, COUNT(*), COALESCE(SUM(cost_usd),0) FROM usage_records`+where+` GROUP BY model ORDER BY SUM(cost_usd) DESC, model LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +259,23 @@ func (s *Store) ModelCostBreakdown(limit int) ([]ModelCostBreakdown, error) {
 		return nil, err
 	}
 	return breakdown, nil
+}
+
+func overviewWhereClause(opts OverviewOptions) (string, []any) {
+	clauses := []string{}
+	args := []any{}
+	if opts.Start != "" {
+		clauses = append(clauses, "timestamp >= ?")
+		args = append(args, opts.Start)
+	}
+	if opts.End != "" {
+		clauses = append(clauses, "timestamp <= ?")
+		args = append(args, opts.End)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
 // LogsAnalytics returns aggregate metrics and per-model breakdowns for the current logs filters.

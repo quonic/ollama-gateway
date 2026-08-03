@@ -222,7 +222,7 @@ func (pc *PricingConfig) CalculateCost(model string, promptTokens, completionTok
 
 To avoid blocking the proxy request path, usage records are written asynchronously:
 
-```go
+````go
 type UsageLogger struct {
     db     *sql.DB
     ch     chan UsageRecord        // Buffered channel; capacity configurable (default 1024)
@@ -273,7 +273,46 @@ func (ul *UsageLogger) run() {
         }
     }
 }
+
+---
+
+## 7. Dashboard Overview Aggregation Windows
+
+The dashboard Overview page supports windowed aggregate analytics via the usage store APIs:
+
+- `OverviewSummary(opts OverviewOptions)`
+- `ModelCostBreakdown(limit int, opts OverviewOptions)`
+
+`OverviewOptions` accepts optional RFC3339 bounds:
+
+```go
+type OverviewOptions struct {
+    Start string
+    End   string
+}
+````
+
+### Window semantics
+
+- `all` window: no bounds applied (all-time totals).
+- `24h` window: `Start=now-24h`, `End=now`.
+- `7d` window: `Start=now-7d`, `End=now`.
+
+The SQL filters are applied as:
+
+```sql
+WHERE timestamp >= ? AND timestamp <= ?
 ```
+
+when bounds are provided; otherwise no `WHERE` clause is added for timestamp.
+
+### Dashboard refresh behavior
+
+- `/admin/overview` renders full page content.
+- `/admin/overview/partial` renders Overview fragment content used by HTMX polling every 10 seconds.
+- Polling is paused while the browser tab is hidden and resumes with an immediate refresh when visible again.
+
+````
 
 ### Batch Insert SQL
 
@@ -284,7 +323,7 @@ BEGIN;
 INSERT INTO usage_records (timestamp, api_key_id, model, backend_url, prompt_tokens, completion_tokens, duration_ms, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 -- ... more rows in same statement batch ...
 COMMIT;
-```
+````
 
 ### Graceful Shutdown Handling
 

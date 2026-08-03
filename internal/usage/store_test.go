@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNewStore_CreatesDatabase(t *testing.T) {
@@ -196,6 +197,63 @@ func TestStore_LogsAnalytics_FiltersAndBreakdown(t *testing.T) {
 	}
 	if len(analytics.Models) != 1 || analytics.Models[0].Model != "llama3.2:latest" {
 		t.Fatalf("expected llama3.2 breakdown, got %#v", analytics.Models)
+	}
+}
+
+func TestStore_OverviewSummaryAndBreakdown_WithWindowFilters(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test_overview_windows.db")
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	base := time.Date(2026, time.August, 3, 18, 0, 0, 0, time.UTC)
+	records := []UsageRecord{
+		{Timestamp: base.Add(-2 * time.Hour).Format(time.RFC3339), APIKeyID: "user-001", Model: "recent-a", BackendURL: "http://localhost:11434", PromptTokens: 100, CompletionTokens: 50, DurationMS: 100, CostUSD: 1.0},
+		{Timestamp: base.Add(-20 * time.Hour).Format(time.RFC3339), APIKeyID: "user-001", Model: "recent-b", BackendURL: "http://localhost:11434", PromptTokens: 200, CompletionTokens: 60, DurationMS: 100, CostUSD: 2.0},
+		{Timestamp: base.Add(-48 * time.Hour).Format(time.RFC3339), APIKeyID: "user-001", Model: "older", BackendURL: "http://localhost:11434", PromptTokens: 300, CompletionTokens: 70, DurationMS: 100, CostUSD: 3.0},
+	}
+	if err := store.BatchInsert(records); err != nil {
+		t.Fatalf("batch insert failed: %v", err)
+	}
+
+	allSummary, err := store.OverviewSummary(OverviewOptions{})
+	if err != nil {
+		t.Fatalf("overview summary all-time failed: %v", err)
+	}
+	if allSummary.Requests != 3 {
+		t.Fatalf("expected 3 all-time requests, got %d", allSummary.Requests)
+	}
+
+	last24h := OverviewOptions{
+		Start: base.Add(-24 * time.Hour).Format(time.RFC3339),
+		End:   base.Format(time.RFC3339),
+	}
+	summary24h, err := store.OverviewSummary(last24h)
+	if err != nil {
+		t.Fatalf("overview summary 24h failed: %v", err)
+	}
+	if summary24h.Requests != 2 {
+		t.Fatalf("expected 2 requests in 24h window, got %d", summary24h.Requests)
+	}
+	if summary24h.Cost != 3.0 {
+		t.Fatalf("expected 24h cost 3.0, got %v", summary24h.Cost)
+	}
+
+	breakdown24h, err := store.ModelCostBreakdown(10, last24h)
+	if err != nil {
+		t.Fatalf("model breakdown 24h failed: %v", err)
+	}
+	if len(breakdown24h) != 2 {
+		t.Fatalf("expected 2 models in 24h breakdown, got %#v", breakdown24h)
+	}
+	for _, item := range breakdown24h {
+		if item.Model == "older" {
+			t.Fatalf("did not expect older model in 24h breakdown: %#v", breakdown24h)
+		}
 	}
 }
 

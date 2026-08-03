@@ -1,4 +1,47 @@
-{{ define "content-overview" }}
+{{ define "content-overview" }}{{ template "content-overview-fragment" . }}{{ end }}
+{{ define "content-overview-fragment" }}
+<div
+  id="overview-results"
+  hx-get="/admin/overview/partial?window={{ .OverviewWindow }}"
+  hx-trigger="every 10s"
+  hx-target="#overview-results"
+  hx-swap="outerHTML"
+>
+<div class="card">
+  <h3>Usage Window</h3>
+  <div class="window-switch" role="tablist" aria-label="Overview usage window">
+    <a
+      class="window-link {{ if eq .OverviewWindow "all" }}is-active{{ end }}"
+      href="/admin/overview"
+      hx-get="/admin/overview/partial?window=all"
+      hx-push-url="true"
+      hx-target="#overview-results"
+      hx-swap="outerHTML"
+      >All-time</a
+    >
+    <a
+      class="window-link {{ if eq .OverviewWindow "24h" }}is-active{{ end }}"
+      href="/admin/overview?window=24h"
+      hx-get="/admin/overview/partial?window=24h"
+      hx-push-url="true"
+      hx-target="#overview-results"
+      hx-swap="outerHTML"
+      >24h</a
+    >
+    <a
+      class="window-link {{ if eq .OverviewWindow "7d" }}is-active{{ end }}"
+      href="/admin/overview?window=7d"
+      hx-get="/admin/overview/partial?window=7d"
+      hx-push-url="true"
+      hx-target="#overview-results"
+      hx-swap="outerHTML"
+      >7d</a
+    >
+  </div>
+  <p class="overview-updated">
+    Last updated: <span class="mono">{{ .OverviewLastUpdated }}</span>
+  </p>
+</div>
 <div class="cards">
   <div class="card">
     <h3>Configured Backends</h3>
@@ -65,7 +108,7 @@
 {{ if .Summary }}
 <div class="cards">
   <div class="card">
-    <h3>Requests (all time)</h3>
+    <h3>Requests ({{ .OverviewWindowLabel }})</h3>
     <p class="metric">{{ index .Summary "requests" }}</p>
   </div>
   <div class="card">

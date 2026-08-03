@@ -528,6 +528,40 @@ button:hover {
 	min-height: 42px;
 }
 
+.window-switch {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.window-link {
+	text-decoration: none;
+	border: 1px solid #ddc5ad;
+	border-radius: 999px;
+	padding: 6px 12px;
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: #7e341f;
+	background: #f4e7d9;
+}
+
+.window-link:hover {
+	background: #efdcc9;
+}
+
+.window-link.is-active {
+	background: linear-gradient(140deg, var(--accent), var(--accent-strong));
+	border-color: var(--accent-strong);
+	color: #fff8f5;
+}
+
+.overview-updated {
+	margin: 10px 0 0;
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+
 .table {
 	width: 100%;
 	border-collapse: collapse;

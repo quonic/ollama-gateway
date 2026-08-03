@@ -618,6 +618,178 @@ func TestLogsPartialRendersFragmentOnly(t *testing.T) {
 	}
 }
 
+func TestOverviewPartialRendersFragmentOnly(t *testing.T) {
+	cfg := &config.Config{
+		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{
+			{Name: "local", URL: "http://127.0.0.1:11434"},
+		},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/overview/partial?window=7d", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200 for overview partial, got %d", resp.Code)
+	}
+	if got := resp.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("expected text/html content type, got %q", got)
+	}
+	if got := resp.Header().Get("HX-Push-Url"); got != "/admin/overview?window=7d" {
+		t.Fatalf("expected HX-Push-Url for selected window, got %q", got)
+	}
+
+	body := resp.Body.String()
+	if !strings.Contains(body, "id=\"overview-results\"") {
+		t.Fatalf("expected overview fragment wrapper, got %q", body)
+	}
+	if !strings.Contains(body, "hx-trigger=\"every 10s\"") {
+		t.Fatalf("expected periodic refresh trigger, got %q", body)
+	}
+	if !strings.Contains(body, "Last updated:") {
+		t.Fatalf("expected last updated marker in overview fragment, got %q", body)
+	}
+	if !strings.Contains(body, "<span class=\"mono\">") {
+		t.Fatalf("expected monospaced timestamp value, got %q", body)
+	}
+	if !strings.Contains(body, "window-link is-active") {
+		t.Fatalf("expected one active window toggle, got %q", body)
+	}
+	if strings.Contains(body, "<!doctype html>") || strings.Contains(body, "Control panel") {
+		t.Fatalf("expected fragment-only response without layout shell, got %q", body)
+	}
+}
+
+func TestOverviewPageIncludesPollingVisibilityGuard(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected overview page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "htmx:beforeRequest") {
+		t.Fatalf("expected visibility-aware htmx request guard script, got %q", body)
+	}
+	if !strings.Contains(body, "document.hidden") {
+		t.Fatalf("expected hidden-tab check in script, got %q", body)
+	}
+	if !strings.Contains(body, "/admin/overview/partial") {
+		t.Fatalf("expected overview partial path in script, got %q", body)
+	}
+}
+
+func TestOverviewWindowFiltersUsageSummary(t *testing.T) {
+	dir := t.TempDir()
+	usageStore, err := usage.NewStore(filepath.Join(dir, "dashboard-overview-window.db"))
+	if err != nil {
+		t.Fatalf("new usage store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = usageStore.Close()
+	})
+
+	base := time.Date(2026, time.August, 3, 18, 0, 0, 0, time.UTC)
+	records := []usage.UsageRecord{
+		{Timestamp: base.Add(-2 * time.Hour).Format(time.RFC3339), APIKeyID: "key-a", Model: "recent-model", BackendURL: "http://127.0.0.1:11434", PromptTokens: 100, CompletionTokens: 20, DurationMS: 100, CostUSD: 1.0},
+		{Timestamp: base.Add(-20 * time.Hour).Format(time.RFC3339), APIKeyID: "key-b", Model: "recent-model-2", BackendURL: "http://127.0.0.1:11434", PromptTokens: 100, CompletionTokens: 20, DurationMS: 100, CostUSD: 2.0},
+		{Timestamp: base.Add(-36 * time.Hour).Format(time.RFC3339), APIKeyID: "key-c", Model: "older-model", BackendURL: "http://127.0.0.1:11434", PromptTokens: 100, CompletionTokens: 20, DurationMS: 100, CostUSD: 3.0},
+	}
+	if err := usageStore.BatchInsert(records); err != nil {
+		t.Fatalf("seed usage records: %v", err)
+	}
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, usageStore, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	handler.now = func() time.Time { return base }
+
+	t.Run("24h window excludes older records", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/overview/partial?window=24h", nil)
+		req.Header.Set("X-Admin-Token", "super-secret")
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected overview partial response, got %d", resp.Code)
+		}
+		body := resp.Body.String()
+		if !strings.Contains(body, "Requests (last 24h)") {
+			t.Fatalf("expected 24h window label, got %q", body)
+		}
+		if !strings.Contains(body, "<p class=\"metric\">2</p>") {
+			t.Fatalf("expected 2 requests in 24h window, got %q", body)
+		}
+		if strings.Contains(body, "older-model") {
+			t.Fatalf("did not expect older model in 24h window, got %q", body)
+		}
+	})
+
+	t.Run("7d window includes older records", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/overview/partial?window=7d", nil)
+		req.Header.Set("X-Admin-Token", "super-secret")
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected overview partial response, got %d", resp.Code)
+		}
+		body := resp.Body.String()
+		if !strings.Contains(body, "Requests (last 7d)") {
+			t.Fatalf("expected 7d window label, got %q", body)
+		}
+		if !strings.Contains(body, "<p class=\"metric\">3</p>") {
+			t.Fatalf("expected 3 requests in 7d window, got %q", body)
+		}
+		if !strings.Contains(body, "older-model") {
+			t.Fatalf("expected older model in 7d window, got %q", body)
+		}
+	})
+}
+
 func TestLogsPartialHonorsPaginationAndFilters(t *testing.T) {
 	dir := t.TempDir()
 	usageStore, err := usage.NewStore(filepath.Join(dir, "dashboard-logs-partial.db"))

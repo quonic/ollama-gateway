@@ -42,7 +42,16 @@ type Handler struct {
 
 	refreshResolverCatalog func(map[string]config.ModelEntry)
 	refreshProxyPricing    func(*usage.PricingConfig)
+	now                    func() time.Time
 }
+
+type overviewWindow string
+
+const (
+	overviewWindowAll overviewWindow = "all"
+	overviewWindow24h overviewWindow = "24h"
+	overviewWindow7d  overviewWindow = "7d"
+)
 
 type state struct {
 	disabledBackends map[string]bool
@@ -53,6 +62,7 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 		cfg:        cfg,
 		authStore:  authStore,
 		usageStore: usageStore,
+		now:        time.Now,
 		state: &state{
 			disabledBackends: make(map[string]bool),
 		},
@@ -170,6 +180,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "overview":
 		h.renderOverview(w, r)
+	case "overview/partial":
+		h.renderOverviewPartial(w, r)
 	case "models":
 		h.renderModels(w, r)
 	case "backends":
@@ -233,19 +245,40 @@ func (h *Handler) renderLogin(w http.ResponseWriter, r *http.Request, invalid bo
 }
 
 func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
+	data := h.overviewViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "overview.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) renderOverviewPartial(w http.ResponseWriter, r *http.Request) {
+	data := h.overviewViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("HX-Push-Url", overviewCanonicalURL(r))
+	if err := h.templates.ExecuteTemplate(w, "content-overview-fragment", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) overviewViewData(r *http.Request) map[string]any {
+	window := parseOverviewWindow(r)
 	models := h.currentModelCatalog()
 	users := h.usersSnapshot()
 	tlsEnabled := strings.TrimSpace(h.cfg.Server.TLSCertPath) != "" && strings.TrimSpace(h.cfg.Server.TLSKeyPath) != ""
 	data := map[string]any{
-		"Title":            "Overview",
-		"Subtitle":         "Live snapshot of gateway capacity, spend, and backend health.",
-		"Active":           "overview",
-		"ContentBlock":     "content-overview",
-		"BackendCount":     len(h.cfg.Backends),
-		"ModelCount":       len(models),
-		"UserCount":        len(users),
-		"Backends":         h.cfg.Backends,
-		"DisabledBackends": h.state.disabledBackends,
+		"Title":               "Overview",
+		"Subtitle":            "Live snapshot of gateway capacity, spend, and backend health.",
+		"Active":              "overview",
+		"ContentBlock":        "content-overview",
+		"BackendCount":        len(h.cfg.Backends),
+		"ModelCount":          len(models),
+		"UserCount":           len(users),
+		"Backends":            h.cfg.Backends,
+		"DisabledBackends":    h.state.disabledBackends,
+		"OverviewWindow":      string(window),
+		"OverviewWindowLabel": overviewWindowLabel(window),
+		"OverviewLastUpdated": h.now().UTC().Format(time.RFC3339),
 	}
 	if tlsEnabled {
 		tlsStatus := map[string]any{
@@ -278,7 +311,7 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 		data["TLSStatus"] = tlsStatus
 	}
 	if h.usageStore != nil {
-		summary, err := h.loadOverviewSummary()
+		summary, err := h.loadOverviewSummary(window)
 		if err == nil {
 			data["Summary"] = summary
 		}
@@ -304,10 +337,7 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 			"LastError":    fallbackValue(reloadStatus.LastError, "none"),
 		}
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates.ExecuteTemplate(w, "overview.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	return data
 }
 
 func fallbackValue(value string, fallback string) string {
@@ -537,6 +567,56 @@ func logsCanonicalURL(r *http.Request) string {
 		return "/admin/logs"
 	}
 	return "/admin/logs?" + r.URL.RawQuery
+}
+
+func parseOverviewWindow(r *http.Request) overviewWindow {
+	if r == nil {
+		return overviewWindowAll
+	}
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("window"))) {
+	case string(overviewWindow24h):
+		return overviewWindow24h
+	case string(overviewWindow7d):
+		return overviewWindow7d
+	default:
+		return overviewWindowAll
+	}
+}
+
+func overviewWindowLabel(window overviewWindow) string {
+	switch window {
+	case overviewWindow24h:
+		return "last 24h"
+	case overviewWindow7d:
+		return "last 7d"
+	default:
+		return "all time"
+	}
+}
+
+func (h *Handler) overviewWindowBounds(window overviewWindow) usage.OverviewOptions {
+	if window == overviewWindowAll {
+		return usage.OverviewOptions{}
+	}
+	now := h.now().UTC()
+	start := now
+	if window == overviewWindow24h {
+		start = now.Add(-24 * time.Hour)
+	} else {
+		start = now.Add(-7 * 24 * time.Hour)
+	}
+	return usage.OverviewOptions{
+		Start: start.Format(time.RFC3339),
+		End:   now.Format(time.RFC3339),
+	}
+}
+
+func overviewCanonicalURL(r *http.Request) string {
+	window := parseOverviewWindow(r)
+	if window == overviewWindowAll {
+		return "/admin/overview"
+	}
+	return "/admin/overview?window=" + string(window)
 }
 
 func (h *Handler) renderBackendHealth(w http.ResponseWriter, r *http.Request) {
@@ -1408,15 +1488,16 @@ func (h *Handler) loadLogsAnalytics(opts usage.ListOptions) (usage.LogsAnalytics
 	return h.usageStore.LogsAnalytics(opts)
 }
 
-func (h *Handler) loadOverviewSummary() (map[string]any, error) {
+func (h *Handler) loadOverviewSummary(window overviewWindow) (map[string]any, error) {
 	if h.usageStore == nil {
 		return nil, fmt.Errorf("usage store not configured")
 	}
-	summary, err := h.usageStore.OverviewSummary()
+	opts := h.overviewWindowBounds(window)
+	summary, err := h.usageStore.OverviewSummary(opts)
 	if err != nil {
 		return nil, err
 	}
-	breakdown, err := h.usageStore.ModelCostBreakdown(10)
+	breakdown, err := h.usageStore.ModelCostBreakdown(10, opts)
 	if err != nil {
 		return nil, err
 	}
