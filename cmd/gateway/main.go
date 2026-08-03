@@ -177,9 +177,12 @@ func main() {
 	limiterStore := ratelimit.NewLimiterStore(cfg, authStore)
 	rateLimitMw := ratelimit.NewMiddleware(limiterStore)
 	logger.Info("rate limiter initialized",
+		"backend", cfg.RateLimit.Backend,
 		"default_rate", cfg.RateLimit.DefaultRate,
 		"default_burst", cfg.RateLimit.DefaultBurst,
-		"ttl", cfg.RateLimit.TTL)
+		"ttl", cfg.RateLimit.TTL,
+		"redis_addr", cfg.RateLimit.RedisAddr,
+		"redis_fallback_to_local", cfg.RateLimit.RedisFallbackToLocal)
 
 	// Phase 5: Model registry & backend routing setup
 	resolver, err := models.NewResolverWithCatalog(cfg, activeCatalog)

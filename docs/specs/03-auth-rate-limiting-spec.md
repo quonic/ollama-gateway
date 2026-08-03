@@ -163,17 +163,23 @@ func (tb *TokenBucket) Take(n int) bool {
      w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
      ```
 
-### 3.5 Storage Strategy (v1)
+### 3.5 Storage Strategy
 
-Token buckets are stored in an in-memory concurrent map keyed by API key ID:
+The limiter now supports two backends:
+
+- `local` (default): token buckets are stored in an in-memory concurrent map keyed by API key ID.
+- `redis`: a shared backend can be used to coordinate rate limiting across multiple gateway instances.
+
+The local backend remains the default and preserves the original single-instance semantics. Redis is optional and intended for multi-instance deployments. If Redis is configured but unavailable, the gateway logs a warning and falls back to local-only rate limiting for that process.
 
 ```go
-type LimiterStore struct {
-    buckets sync.Map   // map[string]*TokenBucket, keyed by api_key_id
+type LimiterBackend interface {
+    Allow(keyID string, rate float64, burst int, ttl time.Duration) (bool, int)
+    Close() error
 }
 ```
 
-**No persistence across restarts**: When the gateway restarts, all token buckets reset to full capacity. This is acceptable for v1 since we are not in distributed mode and there is no requirement for durable rate limit state.
+**No persistence across restarts**: When the gateway restarts, all local token buckets reset to full capacity. This is acceptable for the initial distributed rollout, which focuses on shared enforcement rather than durable state across restarts.
 
 ### 3.6 Rate Limiting Scope
 
