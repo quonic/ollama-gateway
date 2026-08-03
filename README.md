@@ -58,6 +58,28 @@ Notes:
 - If `configs/config.yaml` is missing, the loader can fall back to `configs/config.example.yaml`.
 - On first startup, YAML users and backends can seed database tables when those tables are empty.
 
+## Screenshots
+
+### Overview
+
+<img width="2557" height="1307" alt="image" src="https://github.com/user-attachments/assets/24fa9a8f-a058-43ed-a6d2-5ac3b37fb047" />
+
+### Models
+
+<img width="2556" height="1307" alt="image" src="https://github.com/user-attachments/assets/44ba14a4-0aed-4d36-85d2-63f6ae895698" />
+
+### Backends
+
+<img width="2556" height="1307" alt="image" src="https://github.com/user-attachments/assets/bdd41273-0923-4298-8e42-68237d7ac65e" />
+
+### Users
+
+<img width="2556" height="1307" alt="image" src="https://github.com/user-attachments/assets/b00e9c90-1b3b-4611-9a1f-b59f5a543bb8" />
+
+### Logs
+
+<img width="2556" height="1071" alt="image" src="https://github.com/user-attachments/assets/f0063cc9-9531-4fb9-8c9b-d37d66ec292e" />
+
 ## CLI
 
 Current flags:
