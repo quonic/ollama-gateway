@@ -1,7 +1,9 @@
 {{ define "content-backends" }}
 <div class="card">
   <h3>Backend Controls</h3>
-  <p class="hint">Use toggles to drain traffic from a backend without removing its config.</p>
+  <p class="hint">
+    Use toggles to drain traffic from a backend without removing its config.
+  </p>
   <ul class="stack-list">
     {{ range .Backends }}
     <li>

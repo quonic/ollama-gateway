@@ -8,8 +8,13 @@
   {{ if .GeneratedKey }}
   <div class="generated-key">
     <h4>Generated API Key</h4>
-    <p><strong>Raw key:</strong> <span class="mono">{{ .GeneratedKey }}</span></p>
-    <p><strong>sha256 hash:</strong> <span class="mono">{{ .GeneratedHash }}</span></p>
+    <p>
+      <strong>Raw key:</strong> <span class="mono">{{ .GeneratedKey }}</span>
+    </p>
+    <p>
+      <strong>sha256 hash:</strong>
+      <span class="mono">{{ .GeneratedHash }}</span>
+    </p>
     <p class="hint">
       Copy the raw key now — it will not be shown again. Paste the hash into
       config.yaml under a new API key entry.
@@ -23,8 +28,10 @@
     {{ range $id, $user := .Users }}
     <li>
       <strong class="mono">{{ $id }}</strong>
-      <span class="list-meta">{{ if ne $user.APIKeyHash "" }}hash
-      configured{{ else }}no hash{{ end }}</span>
+      <span class="list-meta"
+        >{{ if ne $user.APIKeyHash "" }}hash configured{{ else }}no hash{{ end
+        }}</span
+      >
     </li>
     {{ end }}
   </ul>

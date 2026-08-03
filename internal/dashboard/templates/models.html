@@ -9,8 +9,8 @@
     {{ range $name, $entry := .Models }}
     <li>
       <strong class="mono">{{ $name }}</strong>
-      <span class="list-meta">{{ range $entry.Backends }}{{ .Backend }}
-      {{ end }}
+      <span class="list-meta"
+        >{{ range $entry.Backends }}{{ .Backend }} {{ end }}
       </span>
     </li>
     {{ end }}

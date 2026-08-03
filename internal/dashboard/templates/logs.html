@@ -30,7 +30,9 @@
       {{ range .Analytics.Models }}
       <li>
         <strong class="mono">{{ .Model }}</strong>
-        <span class="list-meta">{{ .Count }} requests · {{ formatCost .Cost }}</span>
+        <span class="list-meta"
+          >{{ .Count }} requests · {{ formatCost .Cost }}</span
+        >
       </li>
       {{ end }}
     </ul>
