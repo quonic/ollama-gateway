@@ -57,6 +57,10 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 	return h, nil
 }
 
+func (h *Handler) SetManager(manager *backends.Manager) {
+	h.manager = manager
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/admin")
 	if path == "" || path == "/" {

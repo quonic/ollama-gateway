@@ -118,6 +118,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "dashboard init error: %v\n", err)
 		os.Exit(1)
 	}
+	dashboardHandler.SetManager(resolver.Manager())
 
 	mux.Handle("/api/", authStore.Middleware(rateLimitMw.Handler(apiRouter)))
 	mux.Handle("/admin/", dashboardHandler)

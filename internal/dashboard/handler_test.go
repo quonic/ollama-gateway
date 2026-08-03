@@ -9,6 +9,7 @@ import (
 
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
+	"ollama-gateway/internal/models"
 )
 
 func TestDashboardLoginFlow(t *testing.T) {
@@ -95,6 +96,63 @@ func TestBackendToggle(t *testing.T) {
 	}
 	if !strings.Contains(resp.Body.String(), "disabled") {
 		t.Fatalf("expected disabled status in body, got %q", resp.Body.String())
+	}
+}
+
+func TestBackendToggle_UpdatesSharedManagerRouting(t *testing.T) {
+	cfg := &config.Config{
+		Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{
+			{Name: "primary", URL: "http://127.0.0.1:11434", Weight: 1},
+			{Name: "secondary", URL: "http://127.0.0.1:11435", Weight: 1},
+		},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "primary"}, {Backend: "secondary"}}},
+		}},
+		Users: map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg)
+	resolver, err := models.NewResolver(cfg)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+	handler.SetManager(resolver.Manager())
+
+	loginForm := url.Values{}
+	loginForm.Set("token", "super-secret")
+	loginReq := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(loginForm.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginResp := httptest.NewRecorder()
+	handler.ServeHTTP(loginResp, loginReq)
+	cookie := loginResp.Result().Cookies()[0]
+
+	toggleReq := httptest.NewRequest(http.MethodPatch, "/admin/backends/toggle/secondary", nil)
+	toggleReq.AddCookie(cookie)
+	toggleResp := httptest.NewRecorder()
+	handler.ServeHTTP(toggleResp, toggleReq)
+	if toggleResp.Code != http.StatusOK {
+		t.Fatalf("expected toggle success, got %d", toggleResp.Code)
+	}
+
+	for _, backend := range resolver.Manager().Backends() {
+		backend.SetHealth(true)
+	}
+
+	pool, err := resolver.Resolve("llama3.2", models.UserOverrides{})
+	if err != nil {
+		t.Fatalf("resolve model: %v", err)
+	}
+	selected, err := pool.Select()
+	if err != nil {
+		t.Fatalf("expected selection to succeed, got %v", err)
+	}
+	if selected == nil || selected.Name != "primary" {
+		t.Fatalf("expected primary backend to remain routable after disabling secondary, got %#v", selected)
 	}
 }
 
