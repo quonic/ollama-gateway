@@ -257,6 +257,7 @@ func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generated
 	users := h.usersSnapshot()
 	viewUsers := make([]map[string]any, 0, len(users))
 	for id, uc := range users {
+		stats, statsErr := h.loadUserStats(id)
 		viewUsers = append(viewUsers, map[string]any{
 			"ID":         id,
 			"Config":     uc,
@@ -266,6 +267,8 @@ func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generated
 			"Rate":       userRateOrDefault(uc.RateLimit, h.cfg.RateLimit.DefaultRate),
 			"Burst":      userBurstOrDefault(uc.RateLimit, h.cfg.RateLimit.DefaultBurst),
 			"TTLSeconds": userTTLOrDefaultSeconds(uc.RateLimit, h.cfg.RateLimit.TTL),
+			"Stats":      stats,
+			"HasStats":   statsErr == nil,
 		})
 	}
 	sort.Slice(viewUsers, func(i, j int) bool {
@@ -400,6 +403,30 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.renderUsersPage(w, rotatedRaw, rotatedHash, "", fmt.Sprintf("API key rotated for user %q.", userName))
+		return
+	}
+
+	if action == "deactivate" {
+		userName := strings.TrimSpace(r.FormValue("user_name"))
+		if userName == "" {
+			h.renderUsersPage(w, "", "", "User name is required for deactivation.", "")
+			return
+		}
+
+		if err := h.authStore.DeactivateUser(userName); err != nil {
+			if errors.Is(err, auth.ErrUserNotFound) {
+				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q not found.", userName), "")
+				return
+			}
+			if errors.Is(err, auth.ErrUserDeactivated) {
+				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q is already deactivated.", userName), "")
+				return
+			}
+			h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to deactivate user %q: %v", userName, err), "")
+			return
+		}
+
+		h.renderUsersPage(w, "", "", "", fmt.Sprintf("User %q deactivated.", userName))
 		return
 	}
 
@@ -665,6 +692,13 @@ func (h *Handler) loadOverviewSummary() (map[string]any, error) {
 		"cost":             summary.Cost,
 		"modelBreakdown":   breakdown,
 	}, nil
+}
+
+func (h *Handler) loadUserStats(userID string) (usage.UserStats, error) {
+	if h.usageStore == nil {
+		return usage.UserStats{}, fmt.Errorf("usage store not configured")
+	}
+	return h.usageStore.UserStats(userID, 5)
 }
 
 func generateAPIKey() string {

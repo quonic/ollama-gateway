@@ -180,6 +180,52 @@
       <input type="hidden" name="user_name" value="{{ $user.ID }}" />
       <button type="submit">Rotate API Key</button>
     </form>
+
+    <form
+      method="post"
+      action="/admin/users"
+      class="inline-form"
+      style="margin-top: 8px"
+      onsubmit="return confirm('Deactivate user {{ $user.ID }}? Their current API key will stop working immediately.')"
+    >
+      <input type="hidden" name="action" value="deactivate" />
+      <input type="hidden" name="user_name" value="{{ $user.ID }}" />
+      <button type="submit">Deactivate User</button>
+    </form>
+
+    {{ if $user.HasStats }}
+    <div style="margin-top: 12px">
+      <h5 style="margin: 0 0 8px">Usage Snapshot</h5>
+      <p class="hint" style="margin: 0 0 6px">
+        Requests: <strong>{{ $user.Stats.Requests }}</strong>
+      </p>
+      <p class="hint" style="margin: 0 0 6px">
+        Prompt tokens: <strong>{{ $user.Stats.PromptTokens }}</strong>
+      </p>
+      <p class="hint" style="margin: 0 0 6px">
+        Completion tokens: <strong>{{ $user.Stats.CompletionTokens }}</strong>
+      </p>
+      <p class="hint" style="margin: 0 0 8px">
+        Total cost: <strong>{{ formatCost $user.Stats.Cost }}</strong>
+      </p>
+
+      {{ if gt (len $user.Stats.TopModels) 0 }}
+      <p class="hint" style="margin: 0 0 6px">
+        <strong>Top Models by Spend</strong>
+      </p>
+      <ul class="stack-list" style="margin-top: 0">
+        {{ range $model := $user.Stats.TopModels }}
+        <li>
+          <span class="mono">{{ $model.Model }}</span>
+          <span class="list-meta"
+            >{{ $model.Count }} req · {{ formatCost $model.Cost }}</span
+          >
+        </li>
+        {{ end }}
+      </ul>
+      {{ end }}
+    </div>
+    {{ end }}
   </div>
   {{ end }}
 </div>

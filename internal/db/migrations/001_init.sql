@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS api_users (
     model_allow_json        TEXT NOT NULL DEFAULT '[]',
     model_deny_json         TEXT NOT NULL DEFAULT '[]',
     aliases_json            TEXT NOT NULL DEFAULT '{}',
+    disabled_at             DATETIME,
     created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
 );

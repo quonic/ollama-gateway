@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS api_users (
 	model_allow_json        TEXT NOT NULL DEFAULT '[]',
 	model_deny_json         TEXT NOT NULL DEFAULT '[]',
 	aliases_json            TEXT NOT NULL DEFAULT '{}',
+	disabled_at             DATETIME,
 	created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -178,6 +179,15 @@ type LogsAnalytics struct {
 	Cost             float64
 	AverageCost      float64
 	Models           []ModelCostBreakdown
+}
+
+// UserStats summarizes usage metrics for a single API user.
+type UserStats struct {
+	Requests         int
+	PromptTokens     int64
+	CompletionTokens int64
+	Cost             float64
+	TopModels        []ModelCostBreakdown
 }
 
 // ListOptions describes filters and pagination for usage log queries.
@@ -273,6 +283,50 @@ func (s *Store) LogsAnalytics(opts ListOptions) (LogsAnalytics, error) {
 		return LogsAnalytics{}, err
 	}
 	return analytics, nil
+}
+
+// UserStats returns aggregate usage metrics for a specific API user.
+func (s *Store) UserStats(userID string, topModelsLimit int) (UserStats, error) {
+	stats := UserStats{}
+	if topModelsLimit <= 0 {
+		topModelsLimit = 5
+	}
+
+	err := s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0)
+		FROM usage_records
+		WHERE api_key_id = ?
+	`, userID).Scan(&stats.Requests, &stats.PromptTokens, &stats.CompletionTokens, &stats.Cost)
+	if err != nil {
+		return UserStats{}, err
+	}
+
+	rows, err := s.db.Query(`
+		SELECT model, COUNT(*), COALESCE(SUM(cost_usd),0)
+		FROM usage_records
+		WHERE api_key_id = ?
+		GROUP BY model
+		ORDER BY SUM(cost_usd) DESC, model
+		LIMIT ?
+	`, userID, topModelsLimit)
+	if err != nil {
+		return UserStats{}, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item ModelCostBreakdown
+		if err := rows.Scan(&item.Model, &item.Count, &item.Cost); err != nil {
+			rows.Close()
+			return UserStats{}, err
+		}
+		stats.TopModels = append(stats.TopModels, item)
+	}
+	if err := rows.Err(); err != nil {
+		return UserStats{}, err
+	}
+
+	return stats, nil
 }
 
 // ListRecords returns usage records for the dashboard logs view with optional filters and pagination.

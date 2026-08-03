@@ -199,6 +199,50 @@ func TestStore_LogsAnalytics_FiltersAndBreakdown(t *testing.T) {
 	}
 }
 
+func TestStore_UserStats(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test_user_stats.db")
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	records := []UsageRecord{
+		{Timestamp: "2026-08-02T10:00:00Z", APIKeyID: "user-001", Model: "llama3.2:latest", BackendURL: "http://localhost:11434", PromptTokens: 100, CompletionTokens: 10, DurationMS: 100, CostUSD: 0.30},
+		{Timestamp: "2026-08-02T11:00:00Z", APIKeyID: "user-001", Model: "qwen2.5:latest", BackendURL: "http://localhost:11434", PromptTokens: 50, CompletionTokens: 15, DurationMS: 120, CostUSD: 0.40},
+		{Timestamp: "2026-08-02T12:00:00Z", APIKeyID: "user-001", Model: "qwen2.5:latest", BackendURL: "http://localhost:11434", PromptTokens: 40, CompletionTokens: 5, DurationMS: 80, CostUSD: 0.20},
+		{Timestamp: "2026-08-02T13:00:00Z", APIKeyID: "user-002", Model: "llama3.2:latest", BackendURL: "http://localhost:11435", PromptTokens: 999, CompletionTokens: 999, DurationMS: 90, CostUSD: 9.99},
+	}
+	if err := store.BatchInsert(records); err != nil {
+		t.Fatalf("batch insert failed: %v", err)
+	}
+
+	stats, err := store.UserStats("user-001", 5)
+	if err != nil {
+		t.Fatalf("user stats failed: %v", err)
+	}
+	if stats.Requests != 3 {
+		t.Fatalf("expected 3 requests, got %d", stats.Requests)
+	}
+	if stats.PromptTokens != 190 {
+		t.Fatalf("expected 190 prompt tokens, got %d", stats.PromptTokens)
+	}
+	if stats.CompletionTokens != 30 {
+		t.Fatalf("expected 30 completion tokens, got %d", stats.CompletionTokens)
+	}
+	if stats.Cost != 0.9 {
+		t.Fatalf("expected total cost 0.9, got %v", stats.Cost)
+	}
+	if len(stats.TopModels) != 2 {
+		t.Fatalf("expected 2 top models, got %#v", stats.TopModels)
+	}
+	if stats.TopModels[0].Model != "qwen2.5:latest" || (stats.TopModels[0].Cost < 0.599999 || stats.TopModels[0].Cost > 0.600001) {
+		t.Fatalf("expected qwen2.5 top cost 0.6, got %#v", stats.TopModels[0])
+	}
+}
+
 func TestNowISO(t *testing.T) {
 	ts := NowISO()
 	if ts == "" {

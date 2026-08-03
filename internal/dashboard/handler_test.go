@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/models"
+	"ollama-gateway/internal/usage"
 )
 
 func TestDashboardLoginFlow(t *testing.T) {
@@ -386,5 +388,93 @@ func TestAdminPagesRenderOwnContent(t *testing.T) {
 				t.Fatalf("expected %s to exclude %q, got %q", tc.path, tc.mustNotContain, body)
 			}
 		})
+	}
+}
+
+func TestDeactivateUserWorkflow(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models:   config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}}}},
+		Users: map[string]config.UserConfig{
+			"demo":       {APIKeyHash: auth.HashAPIKey("demo-key")},
+			"to-disable": {APIKeyHash: auth.HashAPIKey("kill-me")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("action", "deactivate")
+	form.Set("user_name", "to-disable")
+	req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected deactivate user page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "to-disable") || !strings.Contains(body, "deactivated") {
+		t.Fatalf("expected deactivate success message, got %q", body)
+	}
+	if _, ok := cfg.Users["to-disable"]; ok {
+		t.Fatalf("expected user removed from config map")
+	}
+	if _, ok := authStore.LookupAPIKey("kill-me"); ok {
+		t.Fatalf("expected deactivated user key to fail authentication")
+	}
+}
+
+func TestUsersPageShowsPerUserStats(t *testing.T) {
+	dir := t.TempDir()
+	usageStore, err := usage.NewStore(filepath.Join(dir, "dashboard-user-stats.db"))
+	if err != nil {
+		t.Fatalf("new usage store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = usageStore.Close()
+	})
+
+	if err := usageStore.BatchInsert([]usage.UsageRecord{
+		{Timestamp: "2026-08-02T10:00:00Z", APIKeyID: "demo", Model: "llama3.2", BackendURL: "http://127.0.0.1:11434", PromptTokens: 120, CompletionTokens: 30, DurationMS: 120, CostUSD: 0.25},
+		{Timestamp: "2026-08-02T11:00:00Z", APIKeyID: "demo", Model: "qwen2.5", BackendURL: "http://127.0.0.1:11434", PromptTokens: 80, CompletionTokens: 20, DurationMS: 110, CostUSD: 0.4},
+	}); err != nil {
+		t.Fatalf("seed usage records: %v", err)
+	}
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models:   config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}}}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, usageStore, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected users page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Usage Snapshot") || !strings.Contains(body, "Top Models by Spend") {
+		t.Fatalf("expected per-user stats content, got %q", body)
+	}
+	if !strings.Contains(body, "$0.65") {
+		t.Fatalf("expected aggregated user cost in response, got %q", body)
 	}
 }

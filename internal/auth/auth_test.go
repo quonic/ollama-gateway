@@ -290,3 +290,24 @@ func TestStoreUpdateUser_NotFound(t *testing.T) {
 		t.Fatalf("expected ErrUserNotFound, got %v", err)
 	}
 }
+
+func TestStoreDeactivateUser(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	if _, ok := s.LookupAPIKey("alice-secret-key"); !ok {
+		t.Fatalf("expected key to authenticate before deactivation")
+	}
+
+	if err := s.DeactivateUser("user-alice"); err != nil {
+		t.Fatalf("deactivate user: %v", err)
+	}
+
+	if _, ok := s.LookupAPIKey("alice-secret-key"); ok {
+		t.Fatalf("expected deactivated key to fail authentication")
+	}
+
+	if err := s.DeactivateUser("user-alice"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound after removal from config, got %v", err)
+	}
+}

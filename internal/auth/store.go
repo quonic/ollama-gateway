@@ -19,6 +19,7 @@ type Store struct {
 
 var ErrUserExists = errors.New("user already exists")
 var ErrUserNotFound = errors.New("user not found")
+var ErrUserDeactivated = errors.New("user is deactivated")
 
 // NewStore creates an auth store backed by the given config and optional database.
 // When db is nil, auth state is read from YAML config only.
@@ -32,7 +33,7 @@ func (s *Store) LookupAPIKey(rawKey string) (*APIKey, bool) {
 	if s.db != nil {
 		rawKeyHash := HashAPIKey(rawKey)
 		var userID string
-		err := s.db.QueryRow(`SELECT user_id FROM api_users WHERE api_key_hash = ? LIMIT 1`, rawKeyHash).Scan(&userID)
+		err := s.db.QueryRow(`SELECT user_id FROM api_users WHERE api_key_hash = ? AND disabled_at IS NULL LIMIT 1`, rawKeyHash).Scan(&userID)
 		if err == nil {
 			return &APIKey{ID: userID, Name: userID, IsAdmin: false}, true
 		}
@@ -42,6 +43,9 @@ func (s *Store) LookupAPIKey(rawKey string) (*APIKey, bool) {
 	}
 
 	for userID, uc := range s.cfg.Users {
+		if uc.APIKeyHash == "" {
+			continue
+		}
 		if VerifyAPIKeyHash(uc.APIKeyHash, rawKey) {
 			return &APIKey{
 				ID:      userID,
@@ -77,7 +81,7 @@ func (s *Store) GetUserConfig(keyID string) (*config.UserConfig, bool) {
 			SELECT api_key_hash, rate_limit_rate, rate_limit_burst, rate_limit_ttl_seconds,
 			       model_allow_json, model_deny_json, aliases_json
 			FROM api_users
-			WHERE user_id = ?
+			WHERE user_id = ? AND disabled_at IS NULL
 		`, keyID).Scan(&apiKeyHash, &rate, &burst, &ttlSecs, &allowJSON, &denyJSON, &aliasesJSON)
 		if err == nil {
 			uc := config.UserConfig{APIKeyHash: apiKeyHash}
@@ -134,6 +138,7 @@ func (s *Store) ListUsers() (map[string]config.UserConfig, error) {
 		SELECT user_id, api_key_hash, rate_limit_rate, rate_limit_burst, rate_limit_ttl_seconds,
 		       model_allow_json, model_deny_json, aliases_json
 		FROM api_users
+		WHERE disabled_at IS NULL
 		ORDER BY user_id
 	`)
 	if err != nil {
@@ -346,7 +351,7 @@ func (s *Store) RotateUserKey(userID string, rawKey string) (string, string, err
 	res, err := s.db.Exec(`
 		UPDATE api_users
 		SET api_key_hash = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE user_id = ?
+		WHERE user_id = ? AND disabled_at IS NULL
 	`, hash, userID)
 	if err != nil {
 		return "", "", err
@@ -360,6 +365,46 @@ func (s *Store) RotateUserKey(userID string, rawKey string) (string, string, err
 	}
 
 	return rawKey, hash, nil
+}
+
+// DeactivateUser soft-deletes a user so their key no longer authenticates.
+func (s *Store) DeactivateUser(userID string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return fmt.Errorf("user name is required")
+	}
+
+	if s.db == nil {
+		if _, ok := s.cfg.Users[userID]; !ok {
+			return ErrUserNotFound
+		}
+		delete(s.cfg.Users, userID)
+		return nil
+	}
+
+	res, err := s.db.Exec(`
+		UPDATE api_users
+		SET disabled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = ? AND disabled_at IS NULL
+	`, userID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		var exists int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM api_users WHERE user_id = ?`, userID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			return ErrUserDeactivated
+		}
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 func marshalUserFields(uc config.UserConfig) (allowJSON, denyJSON, aliasesJSON string, err error) {
@@ -436,12 +481,21 @@ CREATE TABLE IF NOT EXISTS api_users (
 	model_allow_json        TEXT NOT NULL DEFAULT '[]',
 	model_deny_json         TEXT NOT NULL DEFAULT '[]',
 	aliases_json            TEXT NOT NULL DEFAULT '{}',
+	disabled_at             DATETIME,
 	created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_api_users_key_hash ON api_users(api_key_hash);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(`ALTER TABLE api_users ADD COLUMN disabled_at DATETIME`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) bootstrapUsersFromConfig() error {
