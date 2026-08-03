@@ -1,5 +1,45 @@
 {{ define "content" }}
 <div class="card">
+  <h3>Filtered Analytics</h3>
+  <div class="cards">
+    <div class="card">
+      <h3>Requests</h3>
+      <p class="metric">{{ .Analytics.Requests }}</p>
+    </div>
+    <div class="card">
+      <h3>Prompt Tokens</h3>
+      <p class="metric">{{ .Analytics.PromptTokens }}</p>
+    </div>
+    <div class="card">
+      <h3>Completion Tokens</h3>
+      <p class="metric">{{ .Analytics.CompletionTokens }}</p>
+    </div>
+    <div class="card">
+      <h3>Estimated Cost</h3>
+      <p class="metric">{{ formatCost .Analytics.Cost }}</p>
+    </div>
+    <div class="card">
+      <h3>Avg Cost / Request</h3>
+      <p class="metric">{{ formatCost .Analytics.AverageCost }}</p>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Top Models</h3>
+    {{ if .Analytics.Models }}
+    <ul class="stack-list">
+      {{ range .Analytics.Models }}
+      <li>
+        <strong>{{ .Model }}</strong>
+        <span>{{ .Count }} requests · {{ formatCost .Cost }}</span>
+      </li>
+      {{ end }}
+    </ul>
+    {{ else }}
+    <p>No matching model activity yet.</p>
+    {{ end }}
+  </div>
+</div>
+<div class="card">
   <h3>Filter Records</h3>
   <form class="filters" method="get" action="/admin/logs">
     <label>

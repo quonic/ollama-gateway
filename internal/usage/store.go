@@ -135,6 +135,16 @@ type ModelCostBreakdown struct {
 	Cost  float64
 }
 
+// LogsAnalytics summarizes the currently filtered usage view for the logs dashboard.
+type LogsAnalytics struct {
+	Requests         int
+	PromptTokens     int64
+	CompletionTokens int64
+	Cost             float64
+	AverageCost      float64
+	Models           []ModelCostBreakdown
+}
+
 // ListOptions describes filters and pagination for usage log queries.
 type ListOptions struct {
 	APIKeyID string
@@ -173,6 +183,61 @@ func (s *Store) ModelCostBreakdown(limit int) ([]ModelCostBreakdown, error) {
 		return nil, err
 	}
 	return breakdown, nil
+}
+
+// LogsAnalytics returns aggregate metrics and per-model breakdowns for the current logs filters.
+func (s *Store) LogsAnalytics(opts ListOptions) (LogsAnalytics, error) {
+	clauses := []string{}
+	args := []any{}
+	if opts.APIKeyID != "" {
+		clauses = append(clauses, "api_key_id LIKE ?")
+		args = append(args, "%"+opts.APIKeyID+"%")
+	}
+	if opts.Model != "" {
+		clauses = append(clauses, "model LIKE ?")
+		args = append(args, "%"+opts.Model+"%")
+	}
+	if opts.Start != "" {
+		clauses = append(clauses, "timestamp >= ?")
+		args = append(args, opts.Start)
+	}
+	if opts.End != "" {
+		clauses = append(clauses, "timestamp <= ?")
+		args = append(args, opts.End)
+	}
+
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+
+	var analytics LogsAnalytics
+	summaryQuery := `SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), COALESCE(SUM(cost_usd),0) FROM usage_records` + where
+	if err := s.db.QueryRow(summaryQuery, args...).Scan(&analytics.Requests, &analytics.PromptTokens, &analytics.CompletionTokens, &analytics.Cost); err != nil {
+		return LogsAnalytics{}, err
+	}
+	if analytics.Requests > 0 {
+		analytics.AverageCost = analytics.Cost / float64(analytics.Requests)
+	}
+
+	breakdownQuery := `SELECT model, COUNT(*), COALESCE(SUM(cost_usd),0) FROM usage_records` + where + ` GROUP BY model ORDER BY SUM(cost_usd) DESC, model LIMIT 10`
+	rows, err := s.db.Query(breakdownQuery, args...)
+	if err != nil {
+		return LogsAnalytics{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item ModelCostBreakdown
+		if err := rows.Scan(&item.Model, &item.Count, &item.Cost); err != nil {
+			rows.Close()
+			return LogsAnalytics{}, err
+		}
+		analytics.Models = append(analytics.Models, item)
+	}
+	if err := rows.Err(); err != nil {
+		return LogsAnalytics{}, err
+	}
+	return analytics, nil
 }
 
 // ListRecords returns usage records for the dashboard logs view with optional filters and pagination.

@@ -251,6 +251,10 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			data["Records"] = rows
 		}
+		analytics, err := h.loadLogsAnalytics(filters)
+		if err == nil {
+			data["Analytics"] = analytics
+		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "logs.html", data); err != nil {
@@ -345,6 +349,13 @@ func (h *Handler) loadRecentRecords(opts usage.ListOptions) ([]usage.UsageRecord
 		return nil, fmt.Errorf("usage store not configured")
 	}
 	return h.usageStore.ListRecords(opts)
+}
+
+func (h *Handler) loadLogsAnalytics(opts usage.ListOptions) (usage.LogsAnalytics, error) {
+	if h.usageStore == nil {
+		return usage.LogsAnalytics{}, fmt.Errorf("usage store not configured")
+	}
+	return h.usageStore.LogsAnalytics(opts)
 }
 
 func (h *Handler) loadOverviewSummary() (map[string]any, error) {

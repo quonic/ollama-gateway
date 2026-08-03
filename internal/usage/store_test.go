@@ -162,6 +162,43 @@ func TestStore_ListRecords_FiltersAndPagination(t *testing.T) {
 	}
 }
 
+func TestStore_LogsAnalytics_FiltersAndBreakdown(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test_analytics.db")
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	records := []UsageRecord{
+		{Timestamp: "2026-08-02T10:00:00Z", APIKeyID: "user-001", Model: "llama3.2:latest", BackendURL: "http://localhost:11434", PromptTokens: 100, CompletionTokens: 50, DurationMS: 100, CostUSD: 0.1},
+		{Timestamp: "2026-08-02T11:00:00Z", APIKeyID: "user-002", Model: "gemma2:latest", BackendURL: "http://localhost:11435", PromptTokens: 200, CompletionTokens: 100, DurationMS: 200, CostUSD: 0.2},
+		{Timestamp: "2026-08-02T12:00:00Z", APIKeyID: "user-001", Model: "llama3.2:latest", BackendURL: "http://localhost:11434", PromptTokens: 300, CompletionTokens: 150, DurationMS: 300, CostUSD: 0.3},
+	}
+	if err := store.BatchInsert(records); err != nil {
+		t.Fatalf("batch insert failed: %v", err)
+	}
+
+	analytics, err := store.LogsAnalytics(ListOptions{APIKeyID: "user-001"})
+	if err != nil {
+		t.Fatalf("analytics query failed: %v", err)
+	}
+	if analytics.Requests != 2 {
+		t.Fatalf("expected 2 matching requests, got %d", analytics.Requests)
+	}
+	if analytics.PromptTokens != 400 {
+		t.Fatalf("expected 400 prompt tokens, got %d", analytics.PromptTokens)
+	}
+	if analytics.Cost != 0.4 {
+		t.Fatalf("expected total cost 0.4, got %v", analytics.Cost)
+	}
+	if len(analytics.Models) != 1 || analytics.Models[0].Model != "llama3.2:latest" {
+		t.Fatalf("expected llama3.2 breakdown, got %#v", analytics.Models)
+	}
+}
+
 func TestNowISO(t *testing.T) {
 	ts := NowISO()
 	if ts == "" {
