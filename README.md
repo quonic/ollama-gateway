@@ -120,11 +120,19 @@ Behavior details:
 
 ## Architecture
 
-```
-Client → [Gateway] → Auth Middleware → Rate Limiter → Model Resolver → Proxy Handler → Backend Ollama
-                         ↓              ↓            ↓                ↓
-                    API key lookup  token bucket   model→backend    httputil.ReverseProxy
-                                                    mapping        (streaming passthrough)
+```mermaid
+flowchart LR
+    Client[Client] --> Gateway[Gateway]
+    Gateway --> Auth[Auth Middleware]
+    Auth --> RateLimit[Rate Limiter]
+    RateLimit --> Resolver[Model Resolver]
+    Resolver --> Proxy[Proxy Handler]
+    Proxy --> Backend[Backend Ollama]
+
+    Auth -->|API key lookup| AuthLookup[API key lookup]
+    RateLimit -->|token bucket| RateInfo[token bucket]
+    Resolver -->|model→backend mapping| ModelMap[model→backend mapping]
+    Proxy -->|streaming passthrough| ProxyFlow[httputil.ReverseProxy\nstreaming passthrough]
 ```
 
 See [`docs/plan.md`](docs/plan.md) for implementation status and [`docs/specs/`](docs/specs/) for detailed specifications.
