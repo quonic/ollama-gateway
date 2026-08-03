@@ -1,6 +1,28 @@
 {{ define "content" }}
 <div class="card">
-  <h3>Recent Usage Records</h3>
+  <h3>Filter Records</h3>
+  <form class="filters" method="get" action="/admin/logs">
+    <label>
+      API Key ID
+      <input type="text" name="api_key_id" value="{{ .Filters.APIKeyID }}" />
+    </label>
+    <label>
+      Model
+      <input type="text" name="model" value="{{ .Filters.Model }}" />
+    </label>
+    <label>
+      Start
+      <input type="datetime-local" name="start" value="{{ .Filters.Start }}" />
+    </label>
+    <label>
+      End
+      <input type="datetime-local" name="end" value="{{ .Filters.End }}" />
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+</div>
+<div class="card">
+  <h3>Usage Records</h3>
   {{ if .Records }}
   <table class="table">
     <thead>
@@ -22,6 +44,13 @@
       {{ end }}
     </tbody>
   </table>
+  <div class="pagination">
+    {{ if gt .Page 1 }}
+    <a href="/admin/logs?page={{ sub .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}">Previous</a>
+    {{ end }}
+    <span>Page {{ .Page }}</span>
+    <a href="/admin/logs?page={{ add .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}">Next</a>
+  </div>
   {{ else }}
   <p>No usage records available yet.</p>
   {{ end }}

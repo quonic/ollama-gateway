@@ -131,6 +131,37 @@ func TestStore_InitIsIdempotent(t *testing.T) {
 	defer store.Close()
 }
 
+func TestStore_ListRecords_FiltersAndPagination(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test_list.db")
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	records := []UsageRecord{
+		{Timestamp: "2026-08-02T10:00:00Z", APIKeyID: "user-001", Model: "llama3.2:latest", BackendURL: "http://localhost:11434", DurationMS: 100, CostUSD: 0.1},
+		{Timestamp: "2026-08-02T11:00:00Z", APIKeyID: "user-002", Model: "gemma2:latest", BackendURL: "http://localhost:11435", DurationMS: 200, CostUSD: 0.2},
+		{Timestamp: "2026-08-02T12:00:00Z", APIKeyID: "user-001", Model: "llama3.2:latest", BackendURL: "http://localhost:11434", DurationMS: 300, CostUSD: 0.3},
+	}
+	if err := store.BatchInsert(records); err != nil {
+		t.Fatalf("batch insert failed: %v", err)
+	}
+
+	filtered, err := store.ListRecords(ListOptions{APIKeyID: "user-001", Page: 1, PageSize: 1})
+	if err != nil {
+		t.Fatalf("list records failed: %v", err)
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered record, got %d", len(filtered))
+	}
+	if filtered[0].APIKeyID != "user-001" {
+		t.Fatalf("expected user-001 record, got %s", filtered[0].APIKeyID)
+	}
+}
+
 func TestNowISO(t *testing.T) {
 	ts := NowISO()
 	if ts == "" {

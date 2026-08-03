@@ -135,6 +135,16 @@ type ModelCostBreakdown struct {
 	Cost  float64
 }
 
+// ListOptions describes filters and pagination for usage log queries.
+type ListOptions struct {
+	APIKeyID string
+	Model    string
+	Start    string
+	End      string
+	Page     int
+	PageSize int
+}
+
 // OverviewSummary returns aggregate usage totals for the dashboard overview.
 func (s *Store) OverviewSummary() (OverviewSummary, error) {
 	var summary OverviewSummary
@@ -163,6 +173,62 @@ func (s *Store) ModelCostBreakdown(limit int) ([]ModelCostBreakdown, error) {
 		return nil, err
 	}
 	return breakdown, nil
+}
+
+// ListRecords returns usage records for the dashboard logs view with optional filters and pagination.
+func (s *Store) ListRecords(opts ListOptions) ([]UsageRecord, error) {
+	if opts.Page <= 0 {
+		opts.Page = 1
+	}
+	if opts.PageSize <= 0 {
+		opts.PageSize = 50
+	}
+
+	clauses := []string{}
+	args := []any{}
+	if opts.APIKeyID != "" {
+		clauses = append(clauses, "api_key_id LIKE ?")
+		args = append(args, "%"+opts.APIKeyID+"%")
+	}
+	if opts.Model != "" {
+		clauses = append(clauses, "model LIKE ?")
+		args = append(args, "%"+opts.Model+"%")
+	}
+	if opts.Start != "" {
+		clauses = append(clauses, "timestamp >= ?")
+		args = append(args, opts.Start)
+	}
+	if opts.End != "" {
+		clauses = append(clauses, "timestamp <= ?")
+		args = append(args, opts.End)
+	}
+
+	query := `SELECT id, timestamp, api_key_id, model, backend_url, prompt_tokens, completion_tokens, duration_ms, cost_usd FROM usage_records`
+	if len(clauses) > 0 {
+		query += ` WHERE ` + strings.Join(clauses, " AND ")
+	}
+	query += ` ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`
+	args = append(args, opts.PageSize, (opts.Page-1)*opts.PageSize)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []UsageRecord
+	for rows.Next() {
+		var rec UsageRecord
+		if err := rows.Scan(&rec.ID, &rec.Timestamp, &rec.APIKeyID, &rec.Model, &rec.BackendURL, &rec.PromptTokens, &rec.CompletionTokens, &rec.DurationMS, &rec.CostUSD); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 // NowISO returns the current time as an ISO 8601 UTC string suitable for storage in usage_records.timestamp.

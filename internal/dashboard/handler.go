@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"ollama-gateway/internal/auth"
@@ -46,6 +47,8 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 			"formatCost":       formatCost,
 			"humanizeDuration": humanizeDuration,
 			"trim":             trimText,
+			"add":              addInt,
+			"sub":              subInt,
 		}).ParseFS(dashboardFS, "templates/*.html")
 		if err != nil {
 			return nil, fmt.Errorf("parse dashboard templates: %w", err)
@@ -222,13 +225,29 @@ func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
+		if parsed, err := strconv.Atoi(pageParam); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	filters := usage.ListOptions{
+		APIKeyID: r.URL.Query().Get("api_key_id"),
+		Model:    r.URL.Query().Get("model"),
+		Start:    r.URL.Query().Get("start"),
+		End:      r.URL.Query().Get("end"),
+		Page:     page,
+		PageSize: 10,
+	}
 	data := map[string]any{
 		"Title":            "Logs",
 		"Active":           "logs",
 		"DisabledBackends": h.state.disabledBackends,
+		"Filters":          filters,
+		"Page":             page,
 	}
 	if h.usageStore != nil {
-		rows, err := h.loadRecentRecords(10)
+		rows, err := h.loadRecentRecords(filters)
 		if err == nil {
 			data["Records"] = rows
 		}
@@ -321,28 +340,11 @@ func (h *Handler) httpError(w http.ResponseWriter, status int, msg string) {
 	_, _ = fmt.Fprint(w, msg)
 }
 
-func (h *Handler) loadRecentRecords(limit int) ([]usage.UsageRecord, error) {
+func (h *Handler) loadRecentRecords(opts usage.ListOptions) ([]usage.UsageRecord, error) {
 	if h.usageStore == nil {
 		return nil, fmt.Errorf("usage store not configured")
 	}
-	rows, err := h.usageStore.DB().Query(`SELECT id, timestamp, api_key_id, model, backend_url, prompt_tokens, completion_tokens, duration_ms, cost_usd FROM usage_records ORDER BY timestamp DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var records []usage.UsageRecord
-	for rows.Next() {
-		var rec usage.UsageRecord
-		if err := rows.Scan(&rec.ID, &rec.Timestamp, &rec.APIKeyID, &rec.Model, &rec.BackendURL, &rec.PromptTokens, &rec.CompletionTokens, &rec.DurationMS, &rec.CostUSD); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		records = append(records, rec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return records, nil
+	return h.usageStore.ListRecords(opts)
 }
 
 func (h *Handler) loadOverviewSummary() (map[string]any, error) {
@@ -409,4 +411,12 @@ func trimText(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func addInt(a, b int) int {
+	return a + b
+}
+
+func subInt(a, b int) int {
+	return a - b
 }
