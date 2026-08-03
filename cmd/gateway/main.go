@@ -34,7 +34,13 @@ func main() {
 	config.RegisterFlags(fs, &opts)
 	flag.Parse()
 
-	cfg, err := config.LoadWithFlags(opts, "configs/config.yaml")
+	cfgPath, err := config.ResolveConfigPath(opts, "configs/config.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
@@ -177,9 +183,12 @@ func main() {
 	limiterStore := ratelimit.NewLimiterStore(cfg, authStore)
 	rateLimitMw := ratelimit.NewMiddleware(limiterStore)
 	logger.Info("rate limiter initialized",
+		"backend", cfg.RateLimit.Backend,
 		"default_rate", cfg.RateLimit.DefaultRate,
 		"default_burst", cfg.RateLimit.DefaultBurst,
-		"ttl", cfg.RateLimit.TTL)
+		"ttl", cfg.RateLimit.TTL,
+		"redis_addr", cfg.RateLimit.RedisAddr,
+		"redis_fallback_to_local", cfg.RateLimit.RedisFallbackToLocal)
 
 	// Phase 5: Model registry & backend routing setup
 	resolver, err := models.NewResolverWithCatalog(cfg, activeCatalog)
@@ -207,6 +216,7 @@ func main() {
 
 	tlsEnabled := cfg.Server.TLSCertPath != "" && cfg.Server.TLSKeyPath != ""
 	var certManager *tlsruntime.Manager
+	var certProvider *tlsruntime.CertificateProvider
 	if tlsEnabled {
 		certManager = tlsruntime.NewManager(
 			cfg.Server.TLSCertPath,
@@ -219,7 +229,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "TLS certificate error: %v\n", err)
 			os.Exit(1)
 		}
-		go certManager.Run(ctx)
+		certProvider = tlsruntime.NewCertificateProvider(logger)
+		certProvider.SetManager(certManager)
+		certProvider.Attach(ctx)
 		logger.Info("TLS certificate watcher started",
 			"cert_path", cfg.Server.TLSCertPath,
 			"check_interval", cfg.Server.TLSCheckInterval,
@@ -258,44 +270,115 @@ func main() {
 	if tlsEnabled {
 		srv.TLSConfig = &tls.Config{
 			MinVersion:     tls.VersionTLS12,
-			GetCertificate: certManager.GetCertificate,
+			GetCertificate: certProvider.GetCertificate,
 		}
 	}
+
+	reloader := config.NewReloader(
+		cfgPath,
+		cfg,
+		logger,
+		config.DefaultRuntimePolicy(),
+		config.RuntimeApplier{
+			ApplyAdminTokenHash: func(tokenHash string) {
+				authStore.ApplyAdminTokenHash(tokenHash)
+			},
+			ApplyBackends: func(_ context.Context, next []config.Backend) error {
+				return applyReloadBackends(resolver.Manager(), backendStore, logger, next)
+			},
+			ApplyTLSPaths: func(_ context.Context, certPath, keyPath string, checkInterval time.Duration, warningDays int) error {
+				if !tlsEnabled {
+					return nil
+				}
+				if certProvider == nil {
+					return fmt.Errorf("TLS certificate provider is not initialized")
+				}
+				if err := certProvider.UpdatePaths(certPath, keyPath, checkInterval, warningDays); err != nil {
+					return err
+				}
+				return nil
+			},
+		},
+	)
+	dashboardHandler.SetReloadStatusProvider(reloader.Status)
+
+	go func() {
+		if err := reloader.Run(ctx); err != nil && !config.IsExpectedStop(err) {
+			status := reloader.Status()
+			logger.Error(
+				"config watcher stopped",
+				"error", err,
+				"source_trigger", status.LastTrigger,
+				"last_reload_at", status.LastReloadAt.Format(time.RFC3339),
+				"last_error", status.LastError,
+			)
+		}
+	}()
 
 	logger.Info("server starting", "listen_addr", cfg.Server.ListenAddr, "tls_enabled", tlsEnabled)
 
 	// Set up graceful shutdown: on SIGTERM/SIGINT, stop accepting connections,
 	// wait for active requests to complete (30s), then flush usage logger.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
 	go func() {
-		sig := <-sigCh
-		logger.Info("received signal; initiating graceful shutdown", "signal", sig.String())
-		stopBackground()
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			logger.Error("graceful server shutdown failed", "error", err)
-		}
-
-		if usageLogger != nil {
-			done := make(chan struct{})
-			go func() {
-				usageLogger.Shutdown(done) // wait for it to be ready
-				close(done)
-			}()
-			select {
-			case <-done:
-				logger.Info("usage logger flushed and stopped")
-			case <-shutdownCtx.Done():
-				logger.Warn("usage logger shutdown timed out; some records may be lost", "error", shutdownCtx.Err())
+		for {
+			sig := <-sigCh
+			if sig == syscall.SIGHUP {
+				logger.Info("received signal; initiating config reload", "signal", sig.String())
+				reloadCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err := reloader.TriggerReload(reloadCtx, "sighup")
+				cancel()
+				status := reloader.Status()
+				if err != nil {
+					logger.Error(
+						"config reload failed",
+						"error", err,
+						"source_trigger", status.LastTrigger,
+						"last_reload_at", status.LastReloadAt.Format(time.RFC3339),
+						"last_error", status.LastError,
+					)
+				} else {
+					logger.Info(
+						"config reload completed",
+						"source_trigger", status.LastTrigger,
+						"last_reload_at", status.LastReloadAt.Format(time.RFC3339),
+						"last_error", status.LastError,
+					)
+				}
+				continue
 			}
-		}
 
-		os.Exit(0)
+			logger.Info("received signal; initiating graceful shutdown", "signal", sig.String())
+			stopBackground()
+			if certProvider != nil {
+				certProvider.Close()
+			}
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				logger.Error("graceful server shutdown failed", "error", err)
+			}
+
+			if usageLogger != nil {
+				done := make(chan struct{})
+				go func() {
+					usageLogger.Shutdown(done) // wait for it to be ready
+					close(done)
+				}()
+				select {
+				case <-done:
+					logger.Info("usage logger flushed and stopped")
+				case <-shutdownCtx.Done():
+					logger.Warn("usage logger shutdown timed out; some records may be lost", "error", shutdownCtx.Err())
+				}
+			}
+
+			os.Exit(0)
+		}
 	}()
 
 	if tlsEnabled {
@@ -325,4 +408,36 @@ func usagePricingFromConfig(pricing config.PricingConfig) *usage.PricingConfig {
 		}
 	}
 	return out
+}
+
+func applyReloadBackends(manager *backends.Manager, backendStore *backends.Store, logger *slog.Logger, next []config.Backend) error {
+	if backendStore != nil {
+		hasRows, err := backendStore.HasAnyBackends()
+		if err != nil {
+			return err
+		}
+		if hasRows {
+			logger.Info("skipping YAML backend hot-reload because database state is authoritative")
+			return nil
+		}
+	}
+
+	target := make(map[string]config.Backend, len(next))
+	for _, b := range next {
+		target[b.Name] = b
+		if err := manager.UpsertBackend(b); err != nil {
+			return err
+		}
+	}
+
+	for _, existing := range manager.Backends() {
+		if _, ok := target[existing.Name]; ok {
+			continue
+		}
+		if err := manager.RemoveBackend(existing.Name); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

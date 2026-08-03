@@ -43,9 +43,16 @@ type AdminConfig struct {
 // RateLimitingConfig defines global defaults applied to API keys that do not
 // specify their own per-key rate_limit override in Users config.
 type RateLimitingConfig struct {
-	DefaultRate  float64       `yaml:"default_rate"`  // tokens/sec refill (e.g. 10.0)
-	DefaultBurst int           `yaml:"default_burst"` // max burst capacity (e.g. 50)
-	TTL          time.Duration `yaml:"ttl,omitempty"` // bucket idle TTL before cleanup (default 1h)
+	DefaultRate          float64       `yaml:"default_rate"`      // tokens/sec refill (e.g. 10.0)
+	DefaultBurst         int           `yaml:"default_burst"`     // max burst capacity (e.g. 50)
+	TTL                  time.Duration `yaml:"ttl,omitempty"`     // bucket idle TTL before cleanup (default 1h)
+	Backend              string        `yaml:"backend,omitempty"` // backend type: local or redis
+	RedisAddr            string        `yaml:"redis_addr,omitempty"`
+	RedisPassword        string        `yaml:"redis_password,omitempty"`
+	RedisDB              int           `yaml:"redis_db,omitempty"`
+	RedisKeyPrefix       string        `yaml:"redis_key_prefix,omitempty"`
+	RedisTimeoutSec      int           `yaml:"redis_timeout_sec,omitempty"`
+	RedisFallbackToLocal bool          `yaml:"redis_fallback_to_local,omitempty"`
 }
 
 // HealthCheckConfig defines periodic health check behavior for backends.
@@ -129,6 +136,9 @@ const (
 	defaultTLSExpiryWarningDays = 30
 	defaultBackendWeight        = 1
 	defaultBucketTTL            = 1 * time.Hour
+	defaultRateLimitBackend     = "local"
+	defaultRedisTimeoutSec      = 2
+	defaultRedisFallbackToLocal = true
 	// Global rate limit defaults (applied when not specified in config).
 	defaultRateLimitRate  float64 = 10.0 // tokens/sec refill
 	defaultRateLimitBurst int     = 50   // max burst capacity
@@ -204,6 +214,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.RateLimit.TTL == 0 {
 		cfg.RateLimit.TTL = defaultBucketTTL
+	}
+	if cfg.RateLimit.Backend == "" {
+		cfg.RateLimit.Backend = defaultRateLimitBackend
+	}
+	if cfg.RateLimit.RedisTimeoutSec <= 0 {
+		cfg.RateLimit.RedisTimeoutSec = defaultRedisTimeoutSec
+	}
+	if !cfg.RateLimit.RedisFallbackToLocal {
+		cfg.RateLimit.RedisFallbackToLocal = defaultRedisFallbackToLocal
 	}
 	for userID, u := range cfg.Users {
 		// Apply global TTL to per-key buckets that don't specify one.

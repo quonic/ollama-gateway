@@ -84,6 +84,20 @@ All dashboard pages share a common layout:
 
 **Purpose**: High-level analytics at a glance — usage trends, costs, top models.
 
+#### Current Runtime Behavior (Implemented)
+
+- The Overview page renders as a normal full-page route at `/admin/overview`.
+- The main content area is also available as an HTMX fragment at `/admin/overview/partial`.
+- The Overview fragment polls every 10 seconds using HTMX and swaps the entire `#overview-results` region.
+- A visible "Last updated" timestamp is rendered inside the Overview fragment on each refresh.
+- Polling requests to `/admin/overview/partial` are paused while the document is hidden and resume with an immediate refresh when the page becomes visible again.
+- Window toggles are supported for usage metrics:
+  - `all` (default; canonical URL `/admin/overview`)
+  - `24h` (canonical URL `/admin/overview?window=24h`)
+  - `7d` (canonical URL `/admin/overview?window=7d`)
+- Window selection affects requests, tokens, cost, and per-model cost breakdown in the Overview cards.
+- Non-HTMX fallback is preserved via normal links to `/admin/overview` with optional `window` query parameter.
+
 #### Key Metrics (Top Row Cards)
 
 | Card                    | Metric                             | Source Query                             |

@@ -146,3 +146,12 @@ func (s *Store) SeedBackends(backends []config.Backend) error {
 	}
 	return nil
 }
+
+// HasAnyBackends reports whether the backend_configs table contains any rows.
+func (s *Store) HasAnyBackends() (bool, error) {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM backend_configs`).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}

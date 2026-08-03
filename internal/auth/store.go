@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"ollama-gateway/internal/config"
@@ -13,6 +14,7 @@ import (
 
 // Store holds the API key and admin token data loaded from configuration.
 type Store struct {
+	mu  sync.RWMutex
 	cfg *config.Config
 	db  *sql.DB
 }
@@ -42,6 +44,8 @@ func (s *Store) LookupAPIKey(rawKey string) (*APIKey, bool) {
 		}
 	}
 
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for userID, uc := range s.cfg.Users {
 		if uc.APIKeyHash == "" {
 			continue
@@ -59,6 +63,8 @@ func (s *Store) LookupAPIKey(rawKey string) (*APIKey, bool) {
 
 // VerifyAdminToken validates a raw admin token against the configured admin hash.
 func (s *Store) CheckAdminToken(rawToken string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.cfg.Admin.TokenHash == "" {
 		return false
 	}
@@ -117,6 +123,8 @@ func (s *Store) GetUserConfig(keyID string) (*config.UserConfig, bool) {
 		}
 	}
 
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	uc, ok := s.cfg.Users[keyID]
 	if !ok {
 		return nil, false
@@ -127,6 +135,8 @@ func (s *Store) GetUserConfig(keyID string) (*config.UserConfig, bool) {
 // ListUsers returns all configured users from database when available, otherwise from YAML config.
 func (s *Store) ListUsers() (map[string]config.UserConfig, error) {
 	if s.db == nil {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
 		users := make(map[string]config.UserConfig, len(s.cfg.Users))
 		for userID, uc := range s.cfg.Users {
 			users[userID] = uc
@@ -206,6 +216,8 @@ func (s *Store) CreateUser(userID string, uc config.UserConfig) error {
 	}
 
 	if s.db == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		if s.cfg.Users == nil {
 			s.cfg.Users = make(map[string]config.UserConfig)
 		}
@@ -259,6 +271,8 @@ func (s *Store) UpdateUser(userID string, uc config.UserConfig) error {
 	}
 
 	if s.db == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		existing, ok := s.cfg.Users[userID]
 		if !ok {
 			return ErrUserNotFound
@@ -339,6 +353,8 @@ func (s *Store) RotateUserKey(userID string, rawKey string) (string, string, err
 	hash := HashAPIKey(rawKey)
 
 	if s.db == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		uc, ok := s.cfg.Users[userID]
 		if !ok {
 			return "", "", ErrUserNotFound
@@ -375,6 +391,8 @@ func (s *Store) DeactivateUser(userID string) error {
 	}
 
 	if s.db == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		if _, ok := s.cfg.Users[userID]; !ok {
 			return ErrUserNotFound
 		}
@@ -436,7 +454,27 @@ func timeFromSeconds(seconds int64) time.Duration {
 
 // GetAdminTokenHash returns the configured admin token hash.
 func (s *Store) GetAdminTokenHash() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.cfg.Admin.TokenHash
+}
+
+// ApplyRuntimeConfig replaces the active config snapshot used by YAML fallback
+// lookups and admin token checks.
+func (s *Store) ApplyRuntimeConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	s.mu.Lock()
+	s.cfg = cfg
+	s.mu.Unlock()
+}
+
+// ApplyAdminTokenHash updates the admin token hash used for dashboard auth.
+func (s *Store) ApplyAdminTokenHash(tokenHash string) {
+	s.mu.Lock()
+	s.cfg.Admin.TokenHash = tokenHash
+	s.mu.Unlock()
 }
 
 // Validate checks that required auth configuration is present and valid.
@@ -459,6 +497,8 @@ func (s *Store) Validate() error {
 		return nil
 	}
 
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if len(s.cfg.Users) == 0 {
 		return fmt.Errorf("no API key users configured")
 	}
@@ -507,7 +547,14 @@ func (s *Store) bootstrapUsersFromConfig() error {
 		return nil
 	}
 
+	s.mu.RLock()
+	seedUsers := make(map[string]config.UserConfig, len(s.cfg.Users))
 	for userID, uc := range s.cfg.Users {
+		seedUsers[userID] = uc
+	}
+	s.mu.RUnlock()
+
+	for userID, uc := range seedUsers {
 		if uc.APIKeyHash == "" {
 			return fmt.Errorf("user %q: api_key_hash is required", userID)
 		}

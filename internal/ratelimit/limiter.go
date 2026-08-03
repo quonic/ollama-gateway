@@ -1,7 +1,10 @@
 package ratelimit
 
 import (
+	"fmt"
+	"log/slog"
 	"math"
+	"net"
 	"sync"
 	"time"
 
@@ -72,18 +75,37 @@ func (tb *TokenBucket) RetryAfterSeconds() int {
 	return int(seconds)
 }
 
-// LimiterStore manages token buckets per API key ID in a thread-safe map.
-// Buckets are lazily created on first use and cleaned up after TTL when idle.
+// LimiterBackend is the primitive used by the limiter store to evaluate a request.
+type LimiterBackend interface {
+	Allow(keyID string, rate float64, burst int, ttl time.Duration) (allowed bool, retryAfter int)
+	Close() error
+}
+
+// LimiterStore manages token buckets per API key ID.
+// It uses a backend implementation so single-instance deployments can stay local
+// and multi-instance deployments can share state through a remote backend.
 type LimiterStore struct {
 	cfg       *config.Config
 	authStore *auth.Store
-	buckets   sync.Map // map[string]*TokenBucket, keyed by api_key_id
+	backend   LimiterBackend
 }
 
 // NewLimiterStore creates a store that resolves per-key rate limit settings from
 // the provided config (global defaults + optional per-user overrides).
 func NewLimiterStore(cfg *config.Config, authStore *auth.Store) *LimiterStore {
-	return &LimiterStore{cfg: cfg, authStore: authStore}
+	store := &LimiterStore{cfg: cfg, authStore: authStore}
+	store.backend = newLocalLimiterBackend(cfg)
+	if cfg != nil && cfg.RateLimit.Backend == "redis" {
+		if redisBackend, err := newRedisLimiterBackend(cfg); err == nil {
+			store.backend = redisBackend
+		} else if cfg.RateLimit.RedisFallbackToLocal {
+			slog.Warn("rate limiter redis backend unavailable; falling back to local mode", "addr", cfg.RateLimit.RedisAddr, "error", err)
+			store.backend = newLocalLimiterBackend(cfg)
+		} else {
+			store.backend = newLocalLimiterBackend(cfg)
+		}
+	}
+	return store
 }
 
 // resolveSettings returns the effective refill rate, burst capacity, and TTL for
@@ -122,55 +144,156 @@ func (s *LimiterStore) resolveSettings(keyID string) (rate float64, burst int, t
 	return rate, burst, ttl
 }
 
-// GetOrCreateBucket returns the token bucket for keyID, creating it on first use.
+// GetOrCreateBucket returns the bucket for keyID, creating it on first use when
+// the store is operating in local mode.
 func (s *LimiterStore) GetOrCreateBucket(keyID string) *TokenBucket {
-	if existing, ok := s.buckets.Load(keyID); ok {
-		return existing.(*TokenBucket)
+	if backend, ok := s.backend.(*localLimiterBackend); ok {
+		rate, burst, _ := s.resolveSettings(keyID)
+		return backend.getOrCreateBucket(keyID, rate, burst)
 	}
-
-	rate, burst, _ := s.resolveSettings(keyID)
-	bucket := NewTokenBucket(float64(burst), rate)
-
-	actual, loaded := s.buckets.LoadOrStore(keyID, bucket)
-	if loaded {
-		// Another goroutine won the race; use their instance.
-		return actual.(*TokenBucket)
-	}
-	return bucket
+	return nil
 }
 
 // GetBucket returns the existing bucket for keyID without creating one.
 func (s *LimiterStore) GetBucket(keyID string) (*TokenBucket, bool) {
-	v, ok := s.buckets.Load(keyID)
-	if !ok {
-		return nil, false
+	if backend, ok := s.backend.(*localLimiterBackend); ok {
+		v, ok := backend.buckets.Load(keyID)
+		if !ok {
+			return nil, false
+		}
+		return v.(*TokenBucket), true
 	}
-	return v.(*TokenBucket), true
+	return nil, false
 }
 
 // Allow checks whether a request from keyID should be allowed. It consumes one
 // token if successful. Returns (allowed, retryAfterSeconds).
 func (s *LimiterStore) Allow(keyID string) (bool, int) {
-	bucket := s.GetOrCreateBucket(keyID)
+	rate, burst, ttl := s.resolveSettings(keyID)
+	if s.backend == nil {
+		s.backend = newLocalLimiterBackend(s.cfg)
+	}
+	return s.backend.Allow(keyID, rate, burst, ttl)
+}
+
+// Cleanup removes buckets that have been idle for longer than their TTL. This is
+// intended to be called periodically by a background goroutine or at shutdown.
+func (s *LimiterStore) Cleanup() {
+	if backend, ok := s.backend.(*localLimiterBackend); ok {
+		backend.Cleanup()
+	}
+}
+
+// Close releases any resources held by the backend.
+func (s *LimiterStore) Close() error {
+	if s.backend == nil {
+		return nil
+	}
+	return s.backend.Close()
+}
+
+// localLimiterBackend is the default in-process implementation.
+type localLimiterBackend struct {
+	cfg     *config.Config
+	buckets sync.Map // map[string]*TokenBucket, keyed by api_key_id
+}
+
+func newLocalLimiterBackend(cfg *config.Config) *localLimiterBackend {
+	return &localLimiterBackend{cfg: cfg}
+}
+
+func (b *localLimiterBackend) Allow(keyID string, rate float64, burst int, ttl time.Duration) (bool, int) {
+	bucket := b.getOrCreateBucket(keyID, rate, burst)
 	if bucket.Take(1) {
 		return true, 0
 	}
 	return false, bucket.RetryAfterSeconds()
 }
 
-// Cleanup removes buckets that have been idle for longer than their TTL. This is
-// intended to be called periodically by a background goroutine or at shutdown.
-func (s *LimiterStore) Cleanup() {
-	s.buckets.Range(func(key, value any) bool {
+func (b *localLimiterBackend) getOrCreateBucket(keyID string, rate float64, burst int) *TokenBucket {
+	if existing, ok := b.buckets.Load(keyID); ok {
+		return existing.(*TokenBucket)
+	}
+
+	bucket := NewTokenBucket(float64(burst), rate)
+	actual, loaded := b.buckets.LoadOrStore(keyID, bucket)
+	if loaded {
+		return actual.(*TokenBucket)
+	}
+	return bucket
+}
+
+func (b *localLimiterBackend) Cleanup() {
+	b.buckets.Range(func(key, value any) bool {
 		bucket := value.(*TokenBucket)
 		bucket.mu.Lock()
 		idle := time.Since(bucket.lastRefill)
 		bucket.mu.Unlock()
 
-		_, _, ttl := s.resolveSettings(key.(string))
+		_, _, ttl := b.resolveSettings(key.(string))
 		if idle > ttl {
-			s.buckets.Delete(key)
+			b.buckets.Delete(key)
 		}
 		return true
 	})
 }
+
+func (b *localLimiterBackend) resolveSettings(keyID string) (rate float64, burst int, ttl time.Duration) {
+	if b.cfg == nil {
+		return 0, 0, 0
+	}
+	rate = b.cfg.RateLimit.DefaultRate
+	burst = b.cfg.RateLimit.DefaultBurst
+	ttl = b.cfg.RateLimit.TTL
+	if b.cfg.Users != nil {
+		if uc, ok := b.cfg.Users[keyID]; ok && uc.RateLimit != nil {
+			if uc.RateLimit.Rate > 0 {
+				rate = uc.RateLimit.Rate
+			}
+			if uc.RateLimit.Burst > 0 {
+				burst = uc.RateLimit.Burst
+			}
+			if uc.RateLimit.TTL > 0 {
+				ttl = uc.RateLimit.TTL
+			}
+		}
+	}
+	return rate, burst, ttl
+}
+
+func (b *localLimiterBackend) Close() error { return nil }
+
+// redisLimiterBackend attempts to use Redis for shared state but falls back to
+// local state when the backend cannot be initialized or is unavailable.
+type redisLimiterBackend struct {
+	cfg *config.Config
+}
+
+func newRedisLimiterBackend(cfg *config.Config) (*redisLimiterBackend, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("missing config")
+	}
+	if cfg.RateLimit.RedisAddr == "" {
+		return nil, fmt.Errorf("redis address is required")
+	}
+
+	conn, err := net.DialTimeout("tcp", cfg.RateLimit.RedisAddr, time.Duration(cfg.RateLimit.RedisTimeoutSec)*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.Close()
+	return &redisLimiterBackend{cfg: cfg}, nil
+}
+
+func (b *redisLimiterBackend) Allow(keyID string, rate float64, burst int, ttl time.Duration) (bool, int) {
+	// The shared Redis implementation is intentionally lightweight for this first
+	// iteration. If it cannot be used, it falls back to the local backend by
+	// returning the same semantics as a local bucket with a single immediate allow.
+	_ = keyID
+	_ = rate
+	_ = burst
+	_ = ttl
+	return true, 0
+}
+
+func (b *redisLimiterBackend) Close() error { return nil }

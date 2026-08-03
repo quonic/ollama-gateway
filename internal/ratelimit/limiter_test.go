@@ -153,6 +153,28 @@ func TestResolveSettings_UnknownUserUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestNewLimiterStore_FallsBackToLocalWhenRedisUnavailable(t *testing.T) {
+	cfg := &config.Config{
+		Users: map[string]config.UserConfig{},
+		RateLimit: config.RateLimitingConfig{
+			Backend:      "redis",
+			RedisAddr:    "127.0.0.1:1",
+			DefaultRate:  10.0,
+			DefaultBurst: 2,
+			TTL:          time.Hour,
+		},
+	}
+	store := NewLimiterStore(cfg, nil)
+
+	allowed, retry := store.Allow("key-1")
+	if !allowed {
+		t.Fatal("expected limiter to allow the first request when falling back to local mode")
+	}
+	if retry != 0 {
+		t.Fatalf("expected retry=0 when allowed, got %d", retry)
+	}
+}
+
 func TestGetOrCreateBucket_CreatesOnFirstUse(t *testing.T) {
 	cfg := testConfigWithRateLimit()
 	store := NewLimiterStore(cfg, nil)

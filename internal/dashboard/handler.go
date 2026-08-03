@@ -38,9 +38,20 @@ type Handler struct {
 	modelStore   *models.Store
 	backendStore *backends.Store
 
+	reloadStatusProvider func() config.ReloadStatus
+
 	refreshResolverCatalog func(map[string]config.ModelEntry)
 	refreshProxyPricing    func(*usage.PricingConfig)
+	now                    func() time.Time
 }
+
+type overviewWindow string
+
+const (
+	overviewWindowAll overviewWindow = "all"
+	overviewWindow24h overviewWindow = "24h"
+	overviewWindow7d  overviewWindow = "7d"
+)
 
 type state struct {
 	disabledBackends map[string]bool
@@ -51,6 +62,7 @@ func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Sto
 		cfg:        cfg,
 		authStore:  authStore,
 		usageStore: usageStore,
+		now:        time.Now,
 		state: &state{
 			disabledBackends: make(map[string]bool),
 		},
@@ -113,6 +125,10 @@ func (h *Handler) SetModelRuntimeRefreshers(
 	h.refreshProxyPricing = refreshProxyPricing
 }
 
+func (h *Handler) SetReloadStatusProvider(provider func() config.ReloadStatus) {
+	h.reloadStatusProvider = provider
+}
+
 func (h *Handler) currentModelCatalog() map[string]config.ModelEntry {
 	if h.models != nil {
 		return h.models
@@ -164,6 +180,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "overview":
 		h.renderOverview(w, r)
+	case "overview/partial":
+		h.renderOverviewPartial(w, r)
 	case "models":
 		h.renderModels(w, r)
 	case "backends":
@@ -172,6 +190,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.renderUsers(w, r)
 	case "logs":
 		h.renderLogs(w, r)
+	case "logs/partial":
+		h.renderLogsPartial(w, r)
 	case "backends/health":
 		h.renderBackendHealth(w, r)
 	default:
@@ -225,19 +245,40 @@ func (h *Handler) renderLogin(w http.ResponseWriter, r *http.Request, invalid bo
 }
 
 func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
+	data := h.overviewViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "overview.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) renderOverviewPartial(w http.ResponseWriter, r *http.Request) {
+	data := h.overviewViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("HX-Push-Url", overviewCanonicalURL(r))
+	if err := h.templates.ExecuteTemplate(w, "content-overview-fragment", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) overviewViewData(r *http.Request) map[string]any {
+	window := parseOverviewWindow(r)
 	models := h.currentModelCatalog()
 	users := h.usersSnapshot()
 	tlsEnabled := strings.TrimSpace(h.cfg.Server.TLSCertPath) != "" && strings.TrimSpace(h.cfg.Server.TLSKeyPath) != ""
 	data := map[string]any{
-		"Title":            "Overview",
-		"Subtitle":         "Live snapshot of gateway capacity, spend, and backend health.",
-		"Active":           "overview",
-		"ContentBlock":     "content-overview",
-		"BackendCount":     len(h.cfg.Backends),
-		"ModelCount":       len(models),
-		"UserCount":        len(users),
-		"Backends":         h.cfg.Backends,
-		"DisabledBackends": h.state.disabledBackends,
+		"Title":               "Overview",
+		"Subtitle":            "Live snapshot of gateway capacity, spend, and backend health.",
+		"Active":              "overview",
+		"ContentBlock":        "content-overview",
+		"BackendCount":        len(h.cfg.Backends),
+		"ModelCount":          len(models),
+		"UserCount":           len(users),
+		"Backends":            h.cfg.Backends,
+		"DisabledBackends":    h.state.disabledBackends,
+		"OverviewWindow":      string(window),
+		"OverviewWindowLabel": overviewWindowLabel(window),
+		"OverviewLastUpdated": h.now().UTC().Format(time.RFC3339),
 	}
 	if tlsEnabled {
 		tlsStatus := map[string]any{
@@ -270,15 +311,47 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 		data["TLSStatus"] = tlsStatus
 	}
 	if h.usageStore != nil {
-		summary, err := h.loadOverviewSummary()
+		summary, err := h.loadOverviewSummary(window)
 		if err == nil {
 			data["Summary"] = summary
 		}
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates.ExecuteTemplate(w, "overview.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if h.reloadStatusProvider != nil {
+		reloadStatus := h.reloadStatusProvider()
+		statusClass := "healthy"
+		statusLabel := "ready"
+		if reloadStatus.LastError != "" {
+			statusClass = "warning"
+			statusLabel = "error"
+		}
+		if reloadStatus.LastTrigger == "" && reloadStatus.LastReloadAt.IsZero() {
+			statusClass = "disabled"
+			statusLabel = "not-run"
+		}
+
+		data["ConfigReloadStatus"] = map[string]any{
+			"StatusClass":  statusClass,
+			"StatusLabel":  statusLabel,
+			"LastTrigger":  fallbackValue(reloadStatus.LastTrigger, "n/a"),
+			"LastReloadAt": formatOptionalTimestamp(reloadStatus.LastReloadAt),
+			"LastError":    fallbackValue(reloadStatus.LastError, "none"),
+		}
 	}
+	return data
+}
+
+func fallbackValue(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatOptionalTimestamp(ts time.Time) string {
+	if ts.IsZero() {
+		return "never"
+	}
+	return ts.Format(time.RFC3339)
 }
 
 func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
@@ -432,20 +505,24 @@ func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generated
 }
 
 func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
-	page := 1
-	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
-		if parsed, err := strconv.Atoi(pageParam); err == nil && parsed > 0 {
-			page = parsed
-		}
+	data := h.logsViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "logs.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-	filters := usage.ListOptions{
-		APIKeyID: r.URL.Query().Get("api_key_id"),
-		Model:    r.URL.Query().Get("model"),
-		Start:    r.URL.Query().Get("start"),
-		End:      r.URL.Query().Get("end"),
-		Page:     page,
-		PageSize: 10,
+}
+
+func (h *Handler) renderLogsPartial(w http.ResponseWriter, r *http.Request) {
+	data := h.logsViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("HX-Push-Url", logsCanonicalURL(r))
+	if err := h.templates.ExecuteTemplate(w, "content-logs-fragment", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (h *Handler) logsViewData(r *http.Request) map[string]any {
+	filters := parseLogsListOptions(r)
 	data := map[string]any{
 		"Title":            "Logs",
 		"Subtitle":         "Filter request history and inspect model-level usage trends.",
@@ -453,7 +530,7 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 		"ContentBlock":     "content-logs",
 		"DisabledBackends": h.state.disabledBackends,
 		"Filters":          filters,
-		"Page":             page,
+		"Page":             filters.Page,
 	}
 	if h.usageStore != nil {
 		rows, err := h.loadRecentRecords(filters)
@@ -465,10 +542,81 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 			data["Analytics"] = analytics
 		}
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates.ExecuteTemplate(w, "logs.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	return data
+}
+
+func parseLogsListOptions(r *http.Request) usage.ListOptions {
+	page := 1
+	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
+		if parsed, err := strconv.Atoi(pageParam); err == nil && parsed > 0 {
+			page = parsed
+		}
 	}
+	return usage.ListOptions{
+		APIKeyID: r.URL.Query().Get("api_key_id"),
+		Model:    r.URL.Query().Get("model"),
+		Start:    r.URL.Query().Get("start"),
+		End:      r.URL.Query().Get("end"),
+		Page:     page,
+		PageSize: 10,
+	}
+}
+
+func logsCanonicalURL(r *http.Request) string {
+	if r == nil || r.URL == nil || strings.TrimSpace(r.URL.RawQuery) == "" {
+		return "/admin/logs"
+	}
+	return "/admin/logs?" + r.URL.RawQuery
+}
+
+func parseOverviewWindow(r *http.Request) overviewWindow {
+	if r == nil {
+		return overviewWindowAll
+	}
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("window"))) {
+	case string(overviewWindow24h):
+		return overviewWindow24h
+	case string(overviewWindow7d):
+		return overviewWindow7d
+	default:
+		return overviewWindowAll
+	}
+}
+
+func overviewWindowLabel(window overviewWindow) string {
+	switch window {
+	case overviewWindow24h:
+		return "last 24h"
+	case overviewWindow7d:
+		return "last 7d"
+	default:
+		return "all time"
+	}
+}
+
+func (h *Handler) overviewWindowBounds(window overviewWindow) usage.OverviewOptions {
+	if window == overviewWindowAll {
+		return usage.OverviewOptions{}
+	}
+	now := h.now().UTC()
+	start := now
+	if window == overviewWindow24h {
+		start = now.Add(-24 * time.Hour)
+	} else {
+		start = now.Add(-7 * 24 * time.Hour)
+	}
+	return usage.OverviewOptions{
+		Start: start.Format(time.RFC3339),
+		End:   now.Format(time.RFC3339),
+	}
+}
+
+func overviewCanonicalURL(r *http.Request) string {
+	window := parseOverviewWindow(r)
+	if window == overviewWindowAll {
+		return "/admin/overview"
+	}
+	return "/admin/overview?window=" + string(window)
 }
 
 func (h *Handler) renderBackendHealth(w http.ResponseWriter, r *http.Request) {
@@ -1340,15 +1488,16 @@ func (h *Handler) loadLogsAnalytics(opts usage.ListOptions) (usage.LogsAnalytics
 	return h.usageStore.LogsAnalytics(opts)
 }
 
-func (h *Handler) loadOverviewSummary() (map[string]any, error) {
+func (h *Handler) loadOverviewSummary(window overviewWindow) (map[string]any, error) {
 	if h.usageStore == nil {
 		return nil, fmt.Errorf("usage store not configured")
 	}
-	summary, err := h.usageStore.OverviewSummary()
+	opts := h.overviewWindowBounds(window)
+	summary, err := h.usageStore.OverviewSummary(opts)
 	if err != nil {
 		return nil, err
 	}
-	breakdown, err := h.usageStore.ModelCostBreakdown(10)
+	breakdown, err := h.usageStore.ModelCostBreakdown(10, opts)
 	if err != nil {
 		return nil, err
 	}

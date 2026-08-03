@@ -20,6 +20,10 @@ rate_limiting:
   default_rate: 10.0 # tokens/sec refill rate for keys without per-key override
   default_burst: 50 # max burst capacity (tokens) for keys without override
   ttl: 1h # idle TTL before bucket cleanup
+  # backend: local # or redis for multi-instance shared rate limiting
+  # redis_addr: "127.0.0.1:6379"
+  # redis_timeout_sec: 2
+  # redis_fallback_to_local: true
 
 backends:
   - name: "local-gpu"

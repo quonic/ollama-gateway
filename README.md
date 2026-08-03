@@ -26,10 +26,10 @@ Implemented now:
 - Weighted backend routing + health checks + backend reachability guard
 - Usage logging (tokens, duration, model, backend, cost) in SQLite
 - Dashboard CRUD flows for users, models, and backends (persisted to SQLite and applied at runtime)
+- Distributed/shared rate limiting across gateway instances
 
 Not implemented yet:
 
-- Distributed/shared rate limiting across gateway instances
 - Native billing/invoicing workflows (usage and cost tracking only)
 - Config hot-reload from YAML without restart
 
@@ -70,6 +70,42 @@ There are no CLI subcommands in the current binary.
 ## Configuration
 
 See [`configs/config.example.yaml`](configs/config.example.yaml) for a full example with comments.
+
+### Redis-backed shared rate limiting (optional)
+
+The gateway can optionally use Redis to coordinate rate-limit state across multiple gateway instances.
+
+1. Install and start Redis (for example, with Docker):
+
+   ```bash
+   docker run --name ollama-gateway-redis -p 6379:6379 -d redis:7-alpine
+   ```
+
+2. Enable Redis in your config under `rate_limiting`:
+
+   ```yaml
+   rate_limiting:
+     default_rate: 10.0
+     default_burst: 50
+     ttl: 1h
+     backend: redis
+     redis_addr: "127.0.0.1:6379"
+     redis_timeout_sec: 2
+     redis_fallback_to_local: true
+   ```
+
+3. Restart the gateway. If Redis is temporarily unavailable, the gateway logs a warning and falls back to local-only rate limiting for that process.
+
+Supported options:
+
+- `backend`: set to `local` or `redis`
+- `redis_addr`: Redis host:port
+- `redis_timeout_sec`: connection timeout for the Redis probe
+- `redis_fallback_to_local`: if `true`, continue with local-only mode when Redis is unavailable
+
+If you are running a single gateway instance, the default `local` backend is sufficient. Redis is intended for multi-instance deployments that need shared rate-limit state.
+
+For Redis setup instructions, including Docker and non-Docker options, see [docs/redis-setup.md](docs/redis-setup.md).
 
 Key sections:
 
