@@ -178,6 +178,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.renderUsers(w, r)
 	case "logs":
 		h.renderLogs(w, r)
+	case "logs/partial":
+		h.renderLogsPartial(w, r)
 	case "backends/health":
 		h.renderBackendHealth(w, r)
 	default:
@@ -473,20 +475,23 @@ func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generated
 }
 
 func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
-	page := 1
-	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
-		if parsed, err := strconv.Atoi(pageParam); err == nil && parsed > 0 {
-			page = parsed
-		}
+	data := h.logsViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "logs.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-	filters := usage.ListOptions{
-		APIKeyID: r.URL.Query().Get("api_key_id"),
-		Model:    r.URL.Query().Get("model"),
-		Start:    r.URL.Query().Get("start"),
-		End:      r.URL.Query().Get("end"),
-		Page:     page,
-		PageSize: 10,
+}
+
+func (h *Handler) renderLogsPartial(w http.ResponseWriter, r *http.Request) {
+	data := h.logsViewData(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "content-logs-fragment", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (h *Handler) logsViewData(r *http.Request) map[string]any {
+	filters := parseLogsListOptions(r)
 	data := map[string]any{
 		"Title":            "Logs",
 		"Subtitle":         "Filter request history and inspect model-level usage trends.",
@@ -494,7 +499,7 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 		"ContentBlock":     "content-logs",
 		"DisabledBackends": h.state.disabledBackends,
 		"Filters":          filters,
-		"Page":             page,
+		"Page":             filters.Page,
 	}
 	if h.usageStore != nil {
 		rows, err := h.loadRecentRecords(filters)
@@ -506,9 +511,23 @@ func (h *Handler) renderLogs(w http.ResponseWriter, r *http.Request) {
 			data["Analytics"] = analytics
 		}
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates.ExecuteTemplate(w, "logs.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	return data
+}
+
+func parseLogsListOptions(r *http.Request) usage.ListOptions {
+	page := 1
+	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
+		if parsed, err := strconv.Atoi(pageParam); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	return usage.ListOptions{
+		APIKeyID: r.URL.Query().Get("api_key_id"),
+		Model:    r.URL.Query().Get("model"),
+		Start:    r.URL.Query().Get("start"),
+		End:      r.URL.Query().Get("end"),
+		Page:     page,
+		PageSize: 10,
 	}
 }
 

@@ -1,106 +1,127 @@
-{{ define "content-logs" }}
-<div class="card">
-  <h3>Filtered Analytics</h3>
-  <div class="cards">
-    <div class="card">
-      <h3>Requests</h3>
-      <p class="metric">{{ .Analytics.Requests }}</p>
+{{ define "content-logs" }} {{ template "content-logs-fragment" . }} {{ end }}
+{{ define "content-logs-fragment" }}
+<div id="logs-results">
+  <div class="card">
+    <h3>Filtered Analytics</h3>
+    <div class="cards">
+      <div class="card">
+        <h3>Requests</h3>
+        <p class="metric">{{ .Analytics.Requests }}</p>
+      </div>
+      <div class="card">
+        <h3>Prompt Tokens</h3>
+        <p class="metric">{{ .Analytics.PromptTokens }}</p>
+      </div>
+      <div class="card">
+        <h3>Completion Tokens</h3>
+        <p class="metric">{{ .Analytics.CompletionTokens }}</p>
+      </div>
+      <div class="card">
+        <h3>Estimated Cost</h3>
+        <p class="metric">{{ formatCost .Analytics.Cost }}</p>
+      </div>
+      <div class="card">
+        <h3>Avg Cost / Request</h3>
+        <p class="metric">{{ formatCost .Analytics.AverageCost }}</p>
+      </div>
     </div>
     <div class="card">
-      <h3>Prompt Tokens</h3>
-      <p class="metric">{{ .Analytics.PromptTokens }}</p>
-    </div>
-    <div class="card">
-      <h3>Completion Tokens</h3>
-      <p class="metric">{{ .Analytics.CompletionTokens }}</p>
-    </div>
-    <div class="card">
-      <h3>Estimated Cost</h3>
-      <p class="metric">{{ formatCost .Analytics.Cost }}</p>
-    </div>
-    <div class="card">
-      <h3>Avg Cost / Request</h3>
-      <p class="metric">{{ formatCost .Analytics.AverageCost }}</p>
+      <h3>Top Models</h3>
+      {{ if .Analytics.Models }}
+      <ul class="stack-list">
+        {{ range .Analytics.Models }}
+        <li>
+          <strong class="mono">{{ .Model }}</strong>
+          <span class="list-meta"
+            >{{ .Count }} requests · {{ formatCost .Cost }}</span
+          >
+        </li>
+        {{ end }}
+      </ul>
+      {{ else }}
+      <p>No matching model activity yet.</p>
+      {{ end }}
     </div>
   </div>
   <div class="card">
-    <h3>Top Models</h3>
-    {{ if .Analytics.Models }}
-    <ul class="stack-list">
-      {{ range .Analytics.Models }}
-      <li>
-        <strong class="mono">{{ .Model }}</strong>
-        <span class="list-meta"
-          >{{ .Count }} requests · {{ formatCost .Cost }}</span
-        >
-      </li>
+    <h3>Filter Records</h3>
+    <form
+      class="filters"
+      method="get"
+      action="/admin/logs"
+      hx-get="/admin/logs/partial"
+      hx-target="#logs-results"
+      hx-swap="outerHTML"
+    >
+      <input type="hidden" name="page" value="1" />
+      <label>
+        API Key ID
+        <input type="text" name="api_key_id" value="{{ .Filters.APIKeyID }}" />
+      </label>
+      <label>
+        Model
+        <input type="text" name="model" value="{{ .Filters.Model }}" />
+      </label>
+      <label>
+        Start
+        <input
+          type="datetime-local"
+          name="start"
+          value="{{ .Filters.Start }}"
+        />
+      </label>
+      <label>
+        End
+        <input type="datetime-local" name="end" value="{{ .Filters.End }}" />
+      </label>
+      <button type="submit">Apply Filters</button>
+    </form>
+  </div>
+  <div class="card">
+    <h3>Usage Records</h3>
+    {{ if .Records }}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>API Key</th>
+          <th>Model</th>
+          <th>Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .Records }}
+        <tr>
+          <td>{{ .Timestamp }}</td>
+          <td>{{ .APIKeyID }}</td>
+          <td>{{ .Model }}</td>
+          <td>{{ formatCost .CostUSD }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    <div class="pagination">
+      {{ if gt .Page 1 }}
+      <a
+        href="/admin/logs?page={{ sub .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
+        hx-get="/admin/logs/partial?page={{ sub .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
+        hx-target="#logs-results"
+        hx-swap="outerHTML"
+        >Previous</a
+      >
       {{ end }}
-    </ul>
+      <span class="page-indicator">Page {{ .Page }}</span>
+      <a
+        href="/admin/logs?page={{ add .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
+        hx-get="/admin/logs/partial?page={{ add .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
+        hx-target="#logs-results"
+        hx-swap="outerHTML"
+        >Next</a
+      >
+    </div>
     {{ else }}
-    <p>No matching model activity yet.</p>
+    <p>No usage records available yet.</p>
     {{ end }}
   </div>
-</div>
-<div class="card">
-  <h3>Filter Records</h3>
-  <form class="filters" method="get" action="/admin/logs">
-    <label>
-      API Key ID
-      <input type="text" name="api_key_id" value="{{ .Filters.APIKeyID }}" />
-    </label>
-    <label>
-      Model
-      <input type="text" name="model" value="{{ .Filters.Model }}" />
-    </label>
-    <label>
-      Start
-      <input type="datetime-local" name="start" value="{{ .Filters.Start }}" />
-    </label>
-    <label>
-      End
-      <input type="datetime-local" name="end" value="{{ .Filters.End }}" />
-    </label>
-    <button type="submit">Apply Filters</button>
-  </form>
-</div>
-<div class="card">
-  <h3>Usage Records</h3>
-  {{ if .Records }}
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Timestamp</th>
-        <th>API Key</th>
-        <th>Model</th>
-        <th>Cost</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{ range .Records }}
-      <tr>
-        <td>{{ .Timestamp }}</td>
-        <td>{{ .APIKeyID }}</td>
-        <td>{{ .Model }}</td>
-        <td>{{ formatCost .CostUSD }}</td>
-      </tr>
-      {{ end }}
-    </tbody>
-  </table>
-  <div class="pagination">
-    {{ if gt .Page 1 }}
-    <a
-      href="/admin/logs?page={{ sub .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
-      >Previous</a
-    >
-    {{ end }}
-    <span class="page-indicator">Page {{ .Page }}</span>
-    <a
-      href="/admin/logs?page={{ add .Page 1 }}{{ if .Filters.APIKeyID }}&api_key_id={{ .Filters.APIKeyID }}{{ end }}{{ if .Filters.Model }}&model={{ .Filters.Model }}{{ end }}{{ if .Filters.Start }}&start={{ .Filters.Start }}{{ end }}{{ if .Filters.End }}&end={{ .Filters.End }}{{ end }}"
-      >Next</a
-    >
-  </div>
-  {{ else }}
-  <p>No usage records available yet.</p>
-  {{ end }}
 </div>
 {{ end }} {{ define "logs.html" }}{{ template "layout.html" . }}{{ end }}
