@@ -49,6 +49,16 @@ func TestReloaderTriggerReloadAppliesAllowedChanges(t *testing.T) {
 	if got := r.Current().Admin.TokenHash; got != "new-token" {
 		t.Fatalf("expected current snapshot token to be updated, got %q", got)
 	}
+	status := r.Status()
+	if status.LastTrigger != "test" {
+		t.Fatalf("expected last trigger to be recorded, got %q", status.LastTrigger)
+	}
+	if status.LastReloadAt.IsZero() {
+		t.Fatalf("expected last reload time to be set")
+	}
+	if status.LastError != "" {
+		t.Fatalf("expected empty last error on success, got %q", status.LastError)
+	}
 }
 
 func TestReloaderRejectsInvalidYAMLAndKeepsCurrent(t *testing.T) {
@@ -83,6 +93,13 @@ func TestReloaderRejectsInvalidYAMLAndKeepsCurrent(t *testing.T) {
 	}
 	if got := r.Current().Admin.TokenHash; got != "old-token" {
 		t.Fatalf("expected old config snapshot to remain active, got %q", got)
+	}
+	status := r.Status()
+	if status.LastTrigger != "test-invalid" {
+		t.Fatalf("expected last trigger to be recorded, got %q", status.LastTrigger)
+	}
+	if status.LastError == "" {
+		t.Fatalf("expected last error to be set after failed reload")
 	}
 }
 

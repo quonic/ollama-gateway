@@ -38,6 +38,8 @@ type Handler struct {
 	modelStore   *models.Store
 	backendStore *backends.Store
 
+	reloadStatusProvider func() config.ReloadStatus
+
 	refreshResolverCatalog func(map[string]config.ModelEntry)
 	refreshProxyPricing    func(*usage.PricingConfig)
 }
@@ -111,6 +113,10 @@ func (h *Handler) SetModelRuntimeRefreshers(
 ) {
 	h.refreshResolverCatalog = refreshResolverCatalog
 	h.refreshProxyPricing = refreshProxyPricing
+}
+
+func (h *Handler) SetReloadStatusProvider(provider func() config.ReloadStatus) {
+	h.reloadStatusProvider = provider
 }
 
 func (h *Handler) currentModelCatalog() map[string]config.ModelEntry {
@@ -275,10 +281,45 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 			data["Summary"] = summary
 		}
 	}
+	if h.reloadStatusProvider != nil {
+		reloadStatus := h.reloadStatusProvider()
+		statusClass := "healthy"
+		statusLabel := "ready"
+		if reloadStatus.LastError != "" {
+			statusClass = "warning"
+			statusLabel = "error"
+		}
+		if reloadStatus.LastTrigger == "" && reloadStatus.LastReloadAt.IsZero() {
+			statusClass = "disabled"
+			statusLabel = "not-run"
+		}
+
+		data["ConfigReloadStatus"] = map[string]any{
+			"StatusClass":  statusClass,
+			"StatusLabel":  statusLabel,
+			"LastTrigger":  fallbackValue(reloadStatus.LastTrigger, "n/a"),
+			"LastReloadAt": formatOptionalTimestamp(reloadStatus.LastReloadAt),
+			"LastError":    fallbackValue(reloadStatus.LastError, "none"),
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "overview.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func fallbackValue(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatOptionalTimestamp(ts time.Time) string {
+	if ts.IsZero() {
+		return "never"
+	}
+	return ts.Format(time.RFC3339)
 }
 
 func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {

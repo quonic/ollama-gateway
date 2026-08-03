@@ -46,6 +46,29 @@
   </ul>
 </div>
 {{ end }}
+{{ if .ConfigReloadStatus }}
+<div class="card">
+  <h3>Config Reload</h3>
+  <ul class="stack-list">
+    <li>
+      <strong>Status</strong>
+      <span class="pill {{ index .ConfigReloadStatus "StatusClass" }}">{{ index .ConfigReloadStatus "StatusLabel" }}</span>
+    </li>
+    <li>
+      <strong>Last Trigger</strong>
+      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastTrigger" }}</span>
+    </li>
+    <li>
+      <strong>Last Reload</strong>
+      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastReloadAt" }}</span>
+    </li>
+    <li>
+      <strong>Last Error</strong>
+      <span class="list-meta mono">{{ index .ConfigReloadStatus "LastError" }}</span>
+    </li>
+  </ul>
+</div>
+{{ end }}
 {{ if .Summary }}
 <div class="cards">
   <div class="card">

@@ -300,10 +300,18 @@ func main() {
 			},
 		},
 	)
+	dashboardHandler.SetReloadStatusProvider(reloader.Status)
 
 	go func() {
 		if err := reloader.Run(ctx); err != nil && !config.IsExpectedStop(err) {
-			logger.Error("config watcher stopped", "error", err)
+			status := reloader.Status()
+			logger.Error(
+				"config watcher stopped",
+				"error", err,
+				"source_trigger", status.LastTrigger,
+				"last_reload_at", status.LastReloadAt.Format(time.RFC3339),
+				"last_error", status.LastError,
+			)
 		}
 	}()
 
@@ -322,10 +330,22 @@ func main() {
 				reloadCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				err := reloader.TriggerReload(reloadCtx, "sighup")
 				cancel()
+				status := reloader.Status()
 				if err != nil {
-					logger.Error("config reload failed", "error", err)
+					logger.Error(
+						"config reload failed",
+						"error", err,
+						"source_trigger", status.LastTrigger,
+						"last_reload_at", status.LastReloadAt.Format(time.RFC3339),
+						"last_error", status.LastError,
+					)
 				} else {
-					logger.Info("config reload completed")
+					logger.Info(
+						"config reload completed",
+						"source_trigger", status.LastTrigger,
+						"last_reload_at", status.LastReloadAt.Format(time.RFC3339),
+						"last_error", status.LastError,
+					)
 				}
 				continue
 			}

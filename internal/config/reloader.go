@@ -19,6 +19,13 @@ type RuntimeApplier struct {
 	ApplyTLSPaths       func(ctx context.Context, certPath, keyPath string, checkInterval time.Duration, warningDays int) error
 }
 
+// ReloadStatus captures the most recent reload attempt outcome.
+type ReloadStatus struct {
+	LastReloadAt time.Time
+	LastError    string
+	LastTrigger  string
+}
+
 // Reloader provides fail-safe config reload from disk.
 type Reloader struct {
 	path string
@@ -41,6 +48,8 @@ type Reloader struct {
 
 	hasAttemptedHash bool
 	attemptedHash    [sha256.Size]byte
+
+	status ReloadStatus
 }
 
 // NewReloader creates a runtime config reloader.
@@ -134,17 +143,21 @@ func (r *Reloader) pollAndMaybeReload(ctx context.Context) error {
 func (r *Reloader) reload(ctx context.Context, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.status.LastTrigger = reason
 
 	next, err := Load(r.path)
 	if err != nil {
+		r.status.LastError = err.Error()
 		return fmt.Errorf("load config: %w", err)
 	}
 	if err := r.policy.ValidateRuntimeChange(r.current, next); err != nil {
+		r.status.LastError = err.Error()
 		return err
 	}
 
 	if r.apply.ApplyBackends != nil {
 		if err := r.apply.ApplyBackends(ctx, next.Backends); err != nil {
+			r.status.LastError = err.Error()
 			return fmt.Errorf("apply backends: %w", err)
 		}
 	}
@@ -156,6 +169,7 @@ func (r *Reloader) reload(ctx context.Context, reason string) error {
 			next.Server.TLSCheckInterval,
 			next.Server.TLSExpiryWarningDays,
 		); err != nil {
+			r.status.LastError = err.Error()
 			return fmt.Errorf("apply TLS paths: %w", err)
 		}
 	}
@@ -167,7 +181,14 @@ func (r *Reloader) reload(ctx context.Context, reason string) error {
 	}
 
 	r.current = next
-	r.logger.Info("config reload applied", "reason", reason)
+	r.status.LastReloadAt = time.Now().UTC()
+	r.status.LastError = ""
+	r.logger.Info(
+		"config reload applied",
+		"reason", reason,
+		"source_trigger", r.status.LastTrigger,
+		"last_reload_at", r.status.LastReloadAt.Format(time.RFC3339),
+	)
 	return nil
 }
 
@@ -176,6 +197,13 @@ func (r *Reloader) Current() *Config {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.current
+}
+
+// Status returns the latest reload observability state.
+func (r *Reloader) Status() ReloadStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.status
 }
 
 // IsExpectedStop reports whether Run returned due to context cancellation.

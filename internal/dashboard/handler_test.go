@@ -138,6 +138,54 @@ func TestOverviewShowsTLSStatusCard(t *testing.T) {
 	}
 }
 
+func TestOverviewShowsConfigReloadStatusCard(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	handler.SetReloadStatusProvider(func() config.ReloadStatus {
+		return config.ReloadStatus{
+			LastReloadAt: time.Date(2026, time.August, 3, 18, 20, 0, 0, time.UTC),
+			LastError:    "",
+			LastTrigger:  "sighup",
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected overview page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "Config Reload") {
+		t.Fatalf("expected config reload card, got %q", body)
+	}
+	if !strings.Contains(body, "sighup") {
+		t.Fatalf("expected trigger value in config reload card, got %q", body)
+	}
+	if !strings.Contains(body, "2026-08-03T18:20:00Z") {
+		t.Fatalf("expected reload timestamp in config reload card, got %q", body)
+	}
+	if !strings.Contains(body, "none") {
+		t.Fatalf("expected default last error value in config reload card, got %q", body)
+	}
+}
+
 func TestBackendToggle(t *testing.T) {
 	cfg := &config.Config{
 		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
