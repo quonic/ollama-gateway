@@ -98,6 +98,21 @@ CREATE TABLE IF NOT EXISTS model_backends (
 
 CREATE INDEX IF NOT EXISTS idx_models_active ON models(active);
 CREATE INDEX IF NOT EXISTS idx_model_backends_backend_name ON model_backends(backend_name);
+
+CREATE TABLE IF NOT EXISTS api_users (
+	user_id                 TEXT PRIMARY KEY,
+	api_key_hash            TEXT NOT NULL,
+	rate_limit_rate         REAL,
+	rate_limit_burst        INTEGER,
+	rate_limit_ttl_seconds  INTEGER,
+	model_allow_json        TEXT NOT NULL DEFAULT '[]',
+	model_deny_json         TEXT NOT NULL DEFAULT '[]',
+	aliases_json            TEXT NOT NULL DEFAULT '{}',
+	created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_users_key_hash ON api_users(api_key_hash);
 	`)
 	return err
 }

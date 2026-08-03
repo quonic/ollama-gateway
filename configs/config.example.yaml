@@ -44,8 +44,8 @@ health_check:
   unhealthy_threshold: 3 # consecutive failures before marking unhealthy (default: 3)
 
 users:
-  # Map of user identifier (e.g., API key label) to config.
-  # api_key_hash is the SHA-256 hex digest of the plaintext API key.
+  # Optional bootstrap users imported to SQLite when api_users is empty.
+  # After startup, manage users in /admin/users instead of editing YAML.
   "user-alice":
     api_key_hash: "" # echo -n "alice-secret-key" | sha256sum
     rate_limit:
@@ -67,7 +67,4 @@ pricing:
       output_cost_per_1m_tokens: 0.00
 
 database:
-  path: ".data/gateway.db" # SQLite database file for usage tracking
-
-database:
-  path: "data/gateway.db"
+  path: ".data/gateway.db" # SQLite database for usage tracking and users

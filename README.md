@@ -8,7 +8,7 @@ the Ollama REST API (`/api/generate`, `/api/chat`, `/api/embed`, etc.) while add
 - **Model catalog management** — global catalog + per-user overrides (allow/deny lists, aliases)
 - **Weighted load balancing** across backends with health-check failover
 - **Usage & cost tracking** — token counts, calculated costs per 1M tokens, SQLite persistence
-- **Embedded HTMX admin dashboard** for monitoring and configuration
+- **Embedded HTMX admin dashboard** for monitoring and configuration, including user creation
 
 Single-binary deployment using `net/http` + `html/template`. No web framework.
 
@@ -20,7 +20,8 @@ go build -o bin/gateway ./cmd/gateway/
 
 # Copy example config and edit it
 cp configs/config.example.yaml configs/config.yaml
-# Edit configs/config.yaml with your backends, models, users, etc.
+# Edit configs/config.yaml with your backends, models, admin token, pricing, etc.
+# Users are stored in SQLite and can be created from /admin/users.
 
 # Run
 ./bin/gateway --config configs/config.yaml
@@ -34,15 +35,15 @@ See [`configs/config.example.yaml`](configs/config.example.yaml) for a full exam
 
 Key sections:
 
-| Section    | Description                                              |
-| ---------- | -------------------------------------------------------- |
-| `server`   | HTTP listen address and timeouts                         |
-| `admin`    | Admin token hash (`X-Admin-Token` header for `/admin/*`) |
-| `backends` | List of Ollama backend servers with weights/headers      |
-| `models`   | Global model catalog — maps models to backends           |
-| `users`    | Per-user API key hashes, rate limits, overrides          |
-| `pricing`  | Cost per 1M tokens (prompt/eval) for each model          |
-| `database` | SQLite database path for usage logs                      |
+| Section    | Description                                                |
+| ---------- | ---------------------------------------------------------- |
+| `server`   | HTTP listen address and timeouts                           |
+| `admin`    | Admin token hash (`X-Admin-Token` header for `/admin/*`)   |
+| `backends` | List of Ollama backend servers with weights/headers        |
+| `models`   | Global model catalog — maps models to backends             |
+| `users`    | Optional bootstrap users imported into DB on first startup |
+| `pricing`  | Cost per 1M tokens (prompt/eval) for each model            |
+| `database` | SQLite database path for usage logs and user records       |
 
 ## Architecture
 

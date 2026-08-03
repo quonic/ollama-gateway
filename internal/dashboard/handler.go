@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"mime"
@@ -188,6 +189,7 @@ func (h *Handler) renderLogin(w http.ResponseWriter, r *http.Request, invalid bo
 
 func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 	models := h.currentModelCatalog()
+	users := h.usersSnapshot()
 	data := map[string]any{
 		"Title":            "Overview",
 		"Subtitle":         "Live snapshot of gateway capacity, spend, and backend health.",
@@ -195,7 +197,7 @@ func (h *Handler) renderOverview(w http.ResponseWriter, r *http.Request) {
 		"ContentBlock":     "content-overview",
 		"BackendCount":     len(h.cfg.Backends),
 		"ModelCount":       len(models),
-		"UserCount":        len(h.cfg.Users),
+		"UserCount":        len(users),
 		"Backends":         h.cfg.Backends,
 		"DisabledBackends": h.state.disabledBackends,
 	}
@@ -244,15 +246,22 @@ func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request) {
+	h.renderUsersPage(w, "", "", "", "")
+}
+
+func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generatedHash, formError, formSuccess string) {
+	users := h.usersSnapshot()
 	data := map[string]any{
 		"Title":            "Users",
-		"Subtitle":         "Generate API keys and audit configured user identities.",
+		"Subtitle":         "Create users, generate API keys, and audit active identities.",
 		"Active":           "users",
 		"ContentBlock":     "content-users",
-		"Users":            h.cfg.Users,
+		"Users":            users,
 		"DisabledBackends": h.state.disabledBackends,
-		"GeneratedKey":     "",
-		"GeneratedHash":    "",
+		"GeneratedKey":     generatedKey,
+		"GeneratedHash":    generatedHash,
+		"FormError":        formError,
+		"FormSuccess":      formSuccess,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "users.html", data); err != nil {
@@ -345,27 +354,48 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 		h.httpError(w, http.StatusBadRequest, "invalid form")
 		return
 	}
-	if r.FormValue("action") != "generate" {
+	action := r.FormValue("action")
+	if action == "generate" {
+		rawKey := generateAPIKey()
+		hash := auth.HashAPIKey(rawKey)
+		h.renderUsersPage(w, rawKey, hash, "", "")
+		return
+	}
+	if action != "create" {
 		h.renderUsers(w, r)
+		return
+	}
+
+	userName := strings.TrimSpace(r.FormValue("user_name"))
+	if userName == "" {
+		h.renderUsersPage(w, "", "", "User name is required.", "")
 		return
 	}
 
 	rawKey := generateAPIKey()
 	hash := auth.HashAPIKey(rawKey)
-	data := map[string]any{
-		"Title":            "Users",
-		"Subtitle":         "Generate API keys and audit configured user identities.",
-		"Active":           "users",
-		"ContentBlock":     "content-users",
-		"Users":            h.cfg.Users,
-		"DisabledBackends": h.state.disabledBackends,
-		"GeneratedKey":     rawKey,
-		"GeneratedHash":    hash,
+	if err := h.authStore.CreateUser(userName, config.UserConfig{APIKeyHash: hash}); err != nil {
+		if errors.Is(err, auth.ErrUserExists) {
+			h.renderUsersPage(w, "", "", fmt.Sprintf("User %q already exists.", userName), "")
+			return
+		}
+		h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to create user %q: %v", userName, err), "")
+		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.templates.ExecuteTemplate(w, "users.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+	h.renderUsersPage(w, rawKey, hash, "", fmt.Sprintf("User %q created.", userName))
+}
+
+func (h *Handler) usersSnapshot() map[string]config.UserConfig {
+	users, err := h.authStore.ListUsers()
+	if err != nil {
+		fallback := make(map[string]config.UserConfig, len(h.cfg.Users))
+		for userID, uc := range h.cfg.Users {
+			fallback[userID] = uc
+		}
+		return fallback
 	}
+	return users
 }
 
 func (h *Handler) serveStatic(w http.ResponseWriter, path string) {

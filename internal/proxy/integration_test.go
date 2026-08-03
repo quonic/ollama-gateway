@@ -53,8 +53,8 @@ func TestProxyIntegration_FullRequestPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new resolver: %v", err)
 	}
-	authStore := auth.NewStore(cfg)
-	limiterStore := ratelimit.NewLimiterStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
+	limiterStore := ratelimit.NewLimiterStore(cfg, authStore)
 	logger := usage.NewUsageLogger(store, usage.LoggerOptions{BufferSize: 10, BatchSize: 1, FlushInterval: time.Hour})
 	proxyHandler := NewProxyHandler(resolver, logger, authStore)
 	chain := authStore.Middleware(ratelimit.NewMiddleware(limiterStore).Handler(proxyHandler))

@@ -1,6 +1,25 @@
 {{ define "content-users" }}
 <div class="card">
-  <h3>Generate New API Key</h3>
+  <h3>Create User</h3>
+  <form method="post" action="/admin/users" class="inline-form">
+    <input type="hidden" name="action" value="create" />
+    <label for="user_name">User name</label>
+    <input
+      id="user_name"
+      name="user_name"
+      type="text"
+      placeholder="team-analytics"
+      required
+    />
+    <button type="submit">Create User and Key</button>
+  </form>
+  {{ if .FormError }}
+  <p class="hint" style="color: #b91c1c"><strong>{{ .FormError }}</strong></p>
+  {{ end }} {{ if .FormSuccess }}
+  <p class="hint" style="color: #166534"><strong>{{ .FormSuccess }}</strong></p>
+  {{ end }}
+
+  <h4 style="margin-top: 1.5rem">Generate Throwaway API Key</h4>
   <form method="post" action="/admin/users" class="inline-form">
     <input type="hidden" name="action" value="generate" />
     <button type="submit">Generate New Key Hash</button>
@@ -15,15 +34,12 @@
       <strong>sha256 hash:</strong>
       <span class="mono">{{ .GeneratedHash }}</span>
     </p>
-    <p class="hint">
-      Copy the raw key now — it will not be shown again. Paste the hash into
-      config.yaml under a new API key entry.
-    </p>
+    <p class="hint">Copy the raw key now. It is only shown once.</p>
   </div>
   {{ end }}
 </div>
 <div class="card">
-  <h3>Configured API Keys</h3>
+  <h3>Configured API Users</h3>
   <ul class="stack-list">
     {{ range $id, $user := .Users }}
     <li>

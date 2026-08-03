@@ -7,6 +7,21 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS api_users (
+    user_id                 TEXT PRIMARY KEY,
+    api_key_hash            TEXT NOT NULL,
+    rate_limit_rate         REAL,
+    rate_limit_burst        INTEGER,
+    rate_limit_ttl_seconds  INTEGER,
+    model_allow_json        TEXT NOT NULL DEFAULT '[]',
+    model_deny_json         TEXT NOT NULL DEFAULT '[]',
+    aliases_json            TEXT NOT NULL DEFAULT '{}',
+    created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_users_key_hash ON api_users(api_key_hash);
+
 -- Usage tracking records for proxied requests. Each entry captures token counts,
 -- cost calculation results, and duration metrics as specified in spec 05-usage-tracking.
 CREATE TABLE IF NOT EXISTS usage_records (

@@ -116,7 +116,7 @@ func testConfigWithRateLimit() *config.Config {
 
 func TestResolveSettings_UsesGlobalDefaults(t *testing.T) {
 	cfg := testConfigWithRateLimit()
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	rate, burst, ttl := store.resolveSettings("user-alice")
 	if rate != 10.0 {
@@ -132,7 +132,7 @@ func TestResolveSettings_UsesGlobalDefaults(t *testing.T) {
 
 func TestResolveSettings_UsesPerUserOverride(t *testing.T) {
 	cfg := testConfigWithRateLimit()
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	rate, burst, _ := store.resolveSettings("user-bob")
 	if rate != 100.0 {
@@ -145,7 +145,7 @@ func TestResolveSettings_UsesPerUserOverride(t *testing.T) {
 
 func TestResolveSettings_UnknownUserUsesDefaults(t *testing.T) {
 	cfg := testConfigWithRateLimit()
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	rate, burst, _ := store.resolveSettings("unknown-user")
 	if rate != 10.0 || burst != 2 {
@@ -155,7 +155,7 @@ func TestResolveSettings_UnknownUserUsesDefaults(t *testing.T) {
 
 func TestGetOrCreateBucket_CreatesOnFirstUse(t *testing.T) {
 	cfg := testConfigWithRateLimit()
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	bucket, ok := store.GetBucket("user-alice")
 	if ok || bucket != nil {
@@ -178,7 +178,7 @@ func TestGetOrCreateBucket_CreatesOnFirstUse(t *testing.T) {
 
 func TestGetOrCreateBucket_ConcurrentSafe(t *testing.T) {
 	cfg := testConfigWithRateLimit()
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	done := make(chan struct{})
 	for i := 0; i < 10; i++ {
@@ -204,7 +204,7 @@ func TestAllow_AllowsUpToBurst(t *testing.T) {
 			TTL:          time.Hour,
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	for i := 0; i < 3; i++ {
 		allowed, retry := store.Allow("key-1")
@@ -232,7 +232,7 @@ func TestAllow_RejectsAfterBurstExhausted(t *testing.T) {
 			TTL:          time.Hour,
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	if !mustAllow(t, store, "key-1") {
 		t.Fatal("first request should be allowed")
@@ -252,7 +252,7 @@ func TestAllow_PerKeyIsolation(t *testing.T) {
 			TTL:          time.Hour,
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	if !mustAllow(t, store, "key-a") {
 		t.Fatal("key-a first request should be allowed")
@@ -277,7 +277,7 @@ func TestCleanup_RemovesIdleBuckets(t *testing.T) {
 			TTL:          50 * time.Millisecond, // very short TTL for test
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	store.GetOrCreateBucket("key-1")
 	if _, ok := store.GetBucket("key-1"); !ok {
@@ -301,7 +301,7 @@ func TestCleanup_KeepsActiveBuckets(t *testing.T) {
 			TTL:          time.Hour, // long TTL
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 
 	store.GetOrCreateBucket("key-1")
 	time.Sleep(20 * time.Millisecond)
@@ -323,7 +323,7 @@ func TestMiddleware_AllowsWithinRateLimit(t *testing.T) {
 			TTL:          time.Hour,
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 	mw := NewMiddleware(store)
 
 	handler := mw.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -351,7 +351,7 @@ func TestMiddleware_Returns429WhenExceeded(t *testing.T) {
 			TTL:          time.Hour,
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 	mw := NewMiddleware(store)
 
 	handler := mw.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +398,7 @@ func TestMiddleware_PassesThroughWithoutAuthContext(t *testing.T) {
 			TTL:          time.Hour,
 		},
 	}
-	store := NewLimiterStore(cfg)
+	store := NewLimiterStore(cfg, nil)
 	mw := NewMiddleware(store)
 
 	handler := mw.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

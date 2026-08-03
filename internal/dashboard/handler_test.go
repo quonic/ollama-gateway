@@ -23,7 +23,7 @@ func TestDashboardLoginFlow(t *testing.T) {
 			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
 		},
 	}
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	handler, err := NewHandler(cfg, authStore, nil, nil)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -76,7 +76,7 @@ func TestBackendToggle(t *testing.T) {
 		Models:   config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}}}},
 		Users:    map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
 	}
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	handler, err := NewHandler(cfg, authStore, nil, nil)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -114,7 +114,7 @@ func TestBackendToggle_UpdatesSharedManagerRouting(t *testing.T) {
 		}},
 		Users: map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
 	}
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	resolver, err := models.NewResolver(cfg)
 	if err != nil {
 		t.Fatalf("new resolver: %v", err)
@@ -166,7 +166,7 @@ func TestGenerateKeyWorkflow(t *testing.T) {
 		Models:   config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}}}},
 		Users:    map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
 	}
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	handler, err := NewHandler(cfg, authStore, nil, nil)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -197,8 +197,49 @@ func TestGenerateKeyWorkflow(t *testing.T) {
 	if !strings.Contains(body, "sha256") {
 		t.Fatalf("expected hash output in response, got %q", body)
 	}
-	if !strings.Contains(body, "Configured API Keys") {
+	if !strings.Contains(body, "Configured API Users") {
 		t.Fatalf("expected users page content, got %q", body)
+	}
+}
+
+func TestCreateUserWorkflow(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models:   config.ModelCatalog{Models: map[string]config.ModelEntry{"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}}}},
+		Users:    map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	loginForm := url.Values{}
+	loginForm.Set("token", "super-secret")
+	loginReq := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(loginForm.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginResp := httptest.NewRecorder()
+	handler.ServeHTTP(loginResp, loginReq)
+	cookie := loginResp.Result().Cookies()[0]
+
+	form := url.Values{}
+	form.Set("action", "create")
+	form.Set("user_name", "analytics-team")
+	req := httptest.NewRequest(http.MethodPost, "/admin/users", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected create user page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "analytics-team") || !strings.Contains(body, "created.") {
+		t.Fatalf("expected create user success message, got %q", body)
+	}
+	if _, ok := cfg.Users["analytics-team"]; !ok {
+		t.Fatalf("expected newly created user to be persisted in store")
 	}
 }
 
@@ -215,7 +256,7 @@ func TestAdminPagesRenderOwnContent(t *testing.T) {
 			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
 		},
 	}
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	handler, err := NewHandler(cfg, authStore, nil, nil)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
@@ -229,8 +270,8 @@ func TestAdminPagesRenderOwnContent(t *testing.T) {
 	}{
 		{name: "overview", path: "/admin/overview", mustContain: "Configured Backends", mustNotContain: "Generated API Key"},
 		{name: "models", path: "/admin/models", mustContain: "Model Catalog", mustNotContain: "Backend Controls"},
-		{name: "backends", path: "/admin/backends", mustContain: "Backend Controls", mustNotContain: "Configured API Keys"},
-		{name: "users", path: "/admin/users", mustContain: "Configured API Keys", mustNotContain: "Filtered Analytics"},
+		{name: "backends", path: "/admin/backends", mustContain: "Backend Controls", mustNotContain: "Configured API Users"},
+		{name: "users", path: "/admin/users", mustContain: "Configured API Users", mustNotContain: "Filtered Analytics"},
 		{name: "logs", path: "/admin/logs", mustContain: "Filtered Analytics", mustNotContain: "Model Catalog"},
 	}
 

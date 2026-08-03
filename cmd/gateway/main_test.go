@@ -57,11 +57,11 @@ func TestServerMux_HandlesAuthRateLimitAndProxyFlow(t *testing.T) {
 		},
 	}
 
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, store.DB())
 	if err := authStore.Validate(); err != nil {
 		t.Fatalf("auth validate: %v", err)
 	}
-	limiterStore := ratelimit.NewLimiterStore(cfg)
+	limiterStore := ratelimit.NewLimiterStore(cfg, authStore)
 	resolver, err := models.NewResolver(cfg)
 	if err != nil {
 		t.Fatalf("new resolver: %v", err)
@@ -171,7 +171,7 @@ func TestServerMux_AdminDashboardAcceptsAdminToken(t *testing.T) {
 		RateLimit: config.RateLimitingConfig{DefaultRate: 10, DefaultBurst: 50, TTL: time.Hour},
 	}
 
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	resolver, err := models.NewResolver(cfg)
 	if err != nil {
 		t.Fatalf("new resolver: %v", err)

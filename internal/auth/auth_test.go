@@ -52,7 +52,7 @@ func TestVerifyAPIKeyHash_EmptyExpected(t *testing.T) {
 
 func TestStoreLookupAPIKey_Found(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	key, ok := s.LookupAPIKey("alice-secret-key")
 	if !ok {
 		t.Fatal("expected key lookup to succeed for valid key")
@@ -64,7 +64,7 @@ func TestStoreLookupAPIKey_Found(t *testing.T) {
 
 func TestStoreLookupAPIKey_NotFound(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	key, ok := s.LookupAPIKey("nonexistent-key")
 	if ok || key != nil {
 		t.Error("expected lookup to fail for invalid key")
@@ -73,7 +73,7 @@ func TestStoreLookupAPIKey_NotFound(t *testing.T) {
 
 func TestStoreCheckAdminToken_Valid(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	if !s.CheckAdminToken("admin-token-123") {
 		t.Error("valid admin token should verify")
 	}
@@ -81,7 +81,7 @@ func TestStoreCheckAdminToken_Valid(t *testing.T) {
 
 func TestStoreCheckAdminToken_Invalid(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	if s.CheckAdminToken("wrong-admin-token") {
 		t.Error("invalid admin token should not verify")
 	}
@@ -91,7 +91,7 @@ func TestStoreValidate_NoUsers(t *testing.T) {
 	cfg := &config.Config{
 		Users: map[string]config.UserConfig{},
 	}
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	if err := s.Validate(); err == nil {
 		t.Error("expected error when no users configured")
 	}
@@ -99,7 +99,7 @@ func TestStoreValidate_NoUsers(t *testing.T) {
 
 func TestMiddleware_MissingAPIKey(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("should not reach downstream handler without API key")
 	}))
@@ -120,7 +120,7 @@ func TestMiddleware_MissingAPIKey(t *testing.T) {
 
 func TestMiddleware_InvalidAPIKey(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("should not reach downstream handler with invalid API key")
 	}))
@@ -142,7 +142,7 @@ func TestMiddleware_InvalidAPIKey(t *testing.T) {
 
 func TestMiddleware_ValidAPIKey(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 
 	var capturedAuth *AuthContext
 	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +173,7 @@ func TestMiddleware_ValidAPIKey(t *testing.T) {
 
 func TestAdminMiddleware_MissingToken(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("should not reach downstream handler without admin token")
 	}))
@@ -194,7 +194,7 @@ func TestAdminMiddleware_MissingToken(t *testing.T) {
 
 func TestAdminMiddleware_InvalidToken(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("should not reach downstream handler with invalid admin token")
 	}))
@@ -216,7 +216,7 @@ func TestAdminMiddleware_InvalidToken(t *testing.T) {
 
 func TestAdminMiddleware_ValidToken(t *testing.T) {
 	cfg := testConfig()
-	s := NewStore(cfg)
+	s := NewStore(cfg, nil)
 
 	handlerCalled := false
 	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

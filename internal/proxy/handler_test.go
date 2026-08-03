@@ -302,7 +302,7 @@ func TestResolveBackendPool_RespectsUserDenyList(t *testing.T) {
 		t.Fatalf("new resolver: %v", err)
 	}
 
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	h := NewProxyHandler(resolver, nil, authStore)
 	ctx := auth.WithAuthContext(context.Background(), &auth.AuthContext{KeyID: "demo"})
 
@@ -342,7 +342,7 @@ func TestProxyHandler_ServeHTTP_ProxiesToSelectedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new resolver: %v", err)
 	}
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	h := NewProxyHandler(resolver, nil, authStore)
 
 	body := `{"model":"llama3","prompt":"hi"}`
@@ -379,7 +379,7 @@ func TestProxyHandler_ServeHTTP_ReturnsBadGatewayWhenBackendUnavailable(t *testi
 	if err != nil {
 		t.Fatalf("new resolver: %v", err)
 	}
-	authStore := auth.NewStore(cfg)
+	authStore := auth.NewStore(cfg, nil)
 	h := NewProxyHandler(resolver, nil, authStore)
 
 	body := `{"model":"llama3","prompt":"hi"}`

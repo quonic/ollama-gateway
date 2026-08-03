@@ -39,29 +39,15 @@ func main() {
 
 	logger.Info("configuration loaded", "listen_addr", cfg.Server.ListenAddr, "backends", len(cfg.Backends))
 
-	// Phase 2: Auth layer setup
-	authStore := auth.NewStore(cfg)
-	if err := authStore.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "auth config error: %v\n", err)
-		os.Exit(1)
-	}
-	logger.Info("auth store initialized", "users", len(cfg.Users))
-
-	// Phase 3: Rate limiting setup
-	limiterStore := ratelimit.NewLimiterStore(cfg)
-	rateLimitMw := ratelimit.NewMiddleware(limiterStore)
-	logger.Info("rate limiter initialized",
-		"default_rate", cfg.RateLimit.DefaultRate,
-		"default_burst", cfg.RateLimit.DefaultBurst,
-		"ttl", cfg.RateLimit.TTL)
-
 	activeCatalog := map[string]config.ModelEntry{}
 
-	// Phase 4: Usage tracking setup and DB-backed model catalog storage
+	// Phase 2: Usage tracking setup and DB-backed model catalog storage
 	var (
 		usageLogger *usage.UsageLogger
 		dbStore     *usage.Store
 		modelStore  *models.Store
+		authStore   *auth.Store
+		userCount   int
 	)
 	if cfg.Database.Path != "" {
 		dbStore, err = usage.NewStore(cfg.Database.Path)
@@ -70,6 +56,18 @@ func main() {
 			os.Exit(1)
 		}
 		defer dbStore.Close()
+
+		authStore = auth.NewStore(cfg, dbStore.DB())
+		if err := authStore.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "auth config error: %v\n", err)
+			os.Exit(1)
+		}
+		if users, listErr := authStore.ListUsers(); listErr == nil {
+			userCount = len(users)
+		} else {
+			userCount = len(cfg.Users)
+		}
+		logger.Info("auth store initialized", "users", userCount)
 
 		modelStore = models.NewStore(dbStore.DB())
 		syncStats := models.SyncStats{}
@@ -154,6 +152,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "config error: database.path is required for DB-backed model catalog runtime\n")
 		os.Exit(1)
 	}
+
+	// Phase 3: Rate limiting setup
+	limiterStore := ratelimit.NewLimiterStore(cfg, authStore)
+	rateLimitMw := ratelimit.NewMiddleware(limiterStore)
+	logger.Info("rate limiter initialized",
+		"default_rate", cfg.RateLimit.DefaultRate,
+		"default_burst", cfg.RateLimit.DefaultBurst,
+		"ttl", cfg.RateLimit.TTL)
 
 	// Phase 5: Model registry & backend routing setup
 	resolver, err := models.NewResolverWithCatalog(cfg, activeCatalog)

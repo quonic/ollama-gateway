@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"ollama-gateway/internal/auth"
 	"ollama-gateway/internal/config"
 )
 
@@ -74,14 +75,15 @@ func (tb *TokenBucket) RetryAfterSeconds() int {
 // LimiterStore manages token buckets per API key ID in a thread-safe map.
 // Buckets are lazily created on first use and cleaned up after TTL when idle.
 type LimiterStore struct {
-	cfg     *config.Config
-	buckets sync.Map // map[string]*TokenBucket, keyed by api_key_id
+	cfg       *config.Config
+	authStore *auth.Store
+	buckets   sync.Map // map[string]*TokenBucket, keyed by api_key_id
 }
 
 // NewLimiterStore creates a store that resolves per-key rate limit settings from
 // the provided config (global defaults + optional per-user overrides).
-func NewLimiterStore(cfg *config.Config) *LimiterStore {
-	return &LimiterStore{cfg: cfg}
+func NewLimiterStore(cfg *config.Config, authStore *auth.Store) *LimiterStore {
+	return &LimiterStore{cfg: cfg, authStore: authStore}
 }
 
 // resolveSettings returns the effective refill rate, burst capacity, and TTL for
@@ -90,6 +92,21 @@ func (s *LimiterStore) resolveSettings(keyID string) (rate float64, burst int, t
 	rate = s.cfg.RateLimit.DefaultRate
 	burst = s.cfg.RateLimit.DefaultBurst
 	ttl = s.cfg.RateLimit.TTL
+
+	if s.authStore != nil {
+		if uc, ok := s.authStore.GetUserConfig(keyID); ok && uc.RateLimit != nil {
+			if uc.RateLimit.Rate > 0 {
+				rate = uc.RateLimit.Rate
+			}
+			if uc.RateLimit.Burst > 0 {
+				burst = uc.RateLimit.Burst
+			}
+			if uc.RateLimit.TTL > 0 {
+				ttl = uc.RateLimit.TTL
+			}
+			return rate, burst, ttl
+		}
+	}
 
 	if uc, ok := s.cfg.Users[keyID]; ok && uc.RateLimit != nil {
 		if uc.RateLimit.Rate > 0 {
