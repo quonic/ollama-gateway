@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"ollama-gateway/internal/auth"
+	"ollama-gateway/internal/backends"
 	"ollama-gateway/internal/config"
 	"ollama-gateway/internal/dashboard"
 	"ollama-gateway/internal/models"
@@ -200,4 +205,239 @@ func TestServerMux_AdminDashboardAcceptsAdminToken(t *testing.T) {
 func Example_main() {
 	fmt.Println("gateway server wiring")
 	// Output: gateway server wiring
+}
+
+func TestSIGHUPReload_UpdatesAdminTokenWithoutRestart(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+
+	initial := testGatewayReloadConfigYAML("old-admin", "http://127.0.0.1:11434")
+	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
+		t.Fatalf("write initial config: %v", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load initial config: %v", err)
+	}
+
+	authStore := auth.NewStore(cfg, nil)
+	if err := authStore.Validate(); err != nil {
+		t.Fatalf("auth validate: %v", err)
+	}
+	dashboardHandler, err := dashboard.NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new dashboard handler: %v", err)
+	}
+
+	updated := testGatewayReloadConfigYAML("new-admin", "http://127.0.0.1:11434")
+	if err := os.WriteFile(configPath, []byte(updated), 0o600); err != nil {
+		t.Fatalf("write updated config: %v", err)
+	}
+
+	r := config.NewReloader(configPath, cfg, nil, config.DefaultRuntimePolicy(), config.RuntimeApplier{
+		ApplyAdminTokenHash: authStore.ApplyAdminTokenHash,
+	})
+
+	if err := r.TriggerReload(context.Background(), "sighup"); err != nil {
+		t.Fatalf("trigger reload: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/admin/", dashboardHandler)
+
+	reqOld := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	reqOld.Header.Set("X-Admin-Token", "old-admin")
+	recOld := httptest.NewRecorder()
+	mux.ServeHTTP(recOld, reqOld)
+	if recOld.Code != http.StatusForbidden {
+		t.Fatalf("expected old token to be rejected after reload, got %d", recOld.Code)
+	}
+
+	reqNew := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	reqNew.Header.Set("X-Admin-Token", "new-admin")
+	recNew := httptest.NewRecorder()
+	mux.ServeHTTP(recNew, reqNew)
+	if recNew.Code != http.StatusOK {
+		t.Fatalf("expected new token to be accepted after reload, got %d; body=%q", recNew.Code, recNew.Body.String())
+	}
+}
+
+func TestApplyReloadBackends_DBPopulatedSkipsYAMLConvergence(t *testing.T) {
+	store, err := usage.NewStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatalf("new usage store: %v", err)
+	}
+	defer store.Close()
+
+	backendStore := backends.NewStore(store.DB())
+	if err := backendStore.UpsertBackend(config.Backend{
+		Name:            "primary",
+		URL:             "http://127.0.0.1:11434",
+		Weight:          1,
+		Timeout:         60 * time.Second,
+		HealthCheckPath: "/api/version",
+	}); err != nil {
+		t.Fatalf("seed backend row: %v", err)
+	}
+
+	cfg := &config.Config{
+		Backends: []config.Backend{{
+			Name:            "primary",
+			URL:             "http://127.0.0.1:11434",
+			Weight:          1,
+			Timeout:         60 * time.Second,
+			HealthCheckPath: "/api/version",
+		}},
+		HealthCheck: config.HealthCheckConfig{IntervalSeconds: 10, TimeoutSeconds: 5, UnhealthyThreshold: 3},
+	}
+	manager, err := backends.NewManager(cfg)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	next := []config.Backend{{
+		Name:            "primary",
+		URL:             "http://127.0.0.1:12434",
+		Weight:          3,
+		Timeout:         30 * time.Second,
+		HealthCheckPath: "/health",
+	}}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := applyReloadBackends(manager, backendStore, logger, next); err != nil {
+		t.Fatalf("apply reload backends: %v", err)
+	}
+
+	b, ok := manager.GetByName("primary")
+	if !ok {
+		t.Fatalf("expected primary backend to remain present")
+	}
+	if b.URL.String() != "http://127.0.0.1:11434" {
+		t.Fatalf("expected runtime backend to remain unchanged when DB has rows, got %s", b.URL.String())
+	}
+	if b.Weight != 1 {
+		t.Fatalf("expected runtime weight to remain unchanged when DB has rows, got %d", b.Weight)
+	}
+}
+
+func TestApplyReloadBackends_DBEmptyConvergesRuntime(t *testing.T) {
+	store, err := usage.NewStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatalf("new usage store: %v", err)
+	}
+	defer store.Close()
+
+	backendStore := backends.NewStore(store.DB())
+
+	cfg := &config.Config{
+		Backends: []config.Backend{
+			{
+				Name:            "primary",
+				URL:             "http://127.0.0.1:11434",
+				Weight:          1,
+				Timeout:         60 * time.Second,
+				HealthCheckPath: "/api/version",
+			},
+			{
+				Name:            "stale",
+				URL:             "http://127.0.0.1:11435",
+				Weight:          1,
+				Timeout:         60 * time.Second,
+				HealthCheckPath: "/api/version",
+			},
+		},
+		HealthCheck: config.HealthCheckConfig{IntervalSeconds: 10, TimeoutSeconds: 5, UnhealthyThreshold: 3},
+	}
+	manager, err := backends.NewManager(cfg)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	next := []config.Backend{
+		{
+			Name:            "primary",
+			URL:             "http://127.0.0.1:12434",
+			Weight:          3,
+			Timeout:         30 * time.Second,
+			HealthCheckPath: "/health",
+		},
+		{
+			Name:            "new-backend",
+			URL:             "http://127.0.0.1:22434",
+			Weight:          2,
+			Timeout:         45 * time.Second,
+			HealthCheckPath: "/ready",
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if err := applyReloadBackends(manager, backendStore, logger, next); err != nil {
+		t.Fatalf("apply reload backends: %v", err)
+	}
+
+	if _, ok := manager.GetByName("stale"); ok {
+		t.Fatalf("expected stale backend to be removed during convergence")
+	}
+
+	primary, ok := manager.GetByName("primary")
+	if !ok {
+		t.Fatalf("expected primary backend to remain present")
+	}
+	if primary.URL.String() != "http://127.0.0.1:12434" {
+		t.Fatalf("expected primary URL to be updated, got %s", primary.URL.String())
+	}
+	if primary.Weight != 3 {
+		t.Fatalf("expected primary weight to be updated, got %d", primary.Weight)
+	}
+
+	added, ok := manager.GetByName("new-backend")
+	if !ok {
+		t.Fatalf("expected new-backend to be added")
+	}
+	if added.URL.String() != "http://127.0.0.1:22434" {
+		t.Fatalf("expected new-backend URL, got %s", added.URL.String())
+	}
+}
+
+func testGatewayReloadConfigYAML(adminToken, backendURL string) string {
+	return "server:\n" +
+		"  listen_addr: 127.0.0.1:4080\n" +
+		"  read_timeout: 30s\n" +
+		"  write_timeout: 120s\n" +
+		"  idle_timeout: 120s\n" +
+		"  tls_check_interval: 24h\n" +
+		"  tls_expiry_warning_days: 30\n" +
+		"admin:\n" +
+		"  token_hash: " + auth.HashAPIKey(adminToken) + "\n" +
+		"rate_limiting:\n" +
+		"  default_rate: 10\n" +
+		"  default_burst: 50\n" +
+		"  ttl: 1h\n" +
+		"backends:\n" +
+		"  - name: primary\n" +
+		"    url: " + backendURL + "\n" +
+		"    weight: 1\n" +
+		"    timeout: 120s\n" +
+		"    health_check_path: /api/version\n" +
+		"models:\n" +
+		"  models:\n" +
+		"    llama3:\n" +
+		"      name: llama3\n" +
+		"      backends:\n" +
+		"        - backend: primary\n" +
+		"          weight: 1\n" +
+		"users:\n" +
+		"  demo:\n" +
+		"    api_key_hash: " + auth.HashAPIKey("demo-key") + "\n" +
+		"pricing:\n" +
+		"  default_input_per_1m_tokens: 0.2\n" +
+		"  default_output_per_1m_tokens: 0.6\n" +
+		"  models: {}\n" +
+		"database:\n" +
+		"  path: gateway.db\n" +
+		"health_check:\n" +
+		"  interval_seconds: 10\n" +
+		"  timeout_seconds: 5\n" +
+		"  unhealthy_threshold: 3\n"
 }
