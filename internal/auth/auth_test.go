@@ -173,6 +173,90 @@ func TestMiddleware_ValidAPIKey(t *testing.T) {
 	}
 }
 
+func TestMiddleware_ValidBearerToken(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/api/generate", nil)
+	req.Header.Set("Authorization", "Bearer alice-secret-key")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for valid bearer token, got %d", w.Code)
+	}
+}
+
+func TestMiddleware_MalformedBearerTreatedAsMissing(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach downstream handler with malformed bearer token")
+	}))
+
+	req := httptest.NewRequest("POST", "/api/generate", nil)
+	req.Header.Set("Authorization", "Bearer")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for malformed bearer token, got %d", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "missing API key" {
+		t.Errorf("unexpected error message: %q", body["error"])
+	}
+}
+
+func TestMiddleware_EmptyXAPIKeyFallsBackToBearer(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/api/generate", nil)
+	req.Header.Set("X-API-Key", "")
+	req.Header.Set("Authorization", "Bearer alice-secret-key")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for empty X-API-Key with valid bearer fallback, got %d", w.Code)
+	}
+}
+
+func TestMiddleware_XAPIKeyPrecedenceOverBearer(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	handler := s.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach downstream handler when X-API-Key is invalid")
+	}))
+
+	req := httptest.NewRequest("POST", "/api/generate", nil)
+	req.Header.Set("X-API-Key", "wrong-key-value")
+	req.Header.Set("Authorization", "Bearer alice-secret-key")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 when X-API-Key is invalid, got %d", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "invalid API key" {
+		t.Errorf("unexpected error message: %q", body["error"])
+	}
+}
+
 func TestAdminMiddleware_MissingToken(t *testing.T) {
 	cfg := testConfig()
 	s := NewStore(cfg, nil)
@@ -236,6 +320,77 @@ func TestAdminMiddleware_ValidToken(t *testing.T) {
 	}
 	if !handlerCalled {
 		t.Error("downstream handler should have been called")
+	}
+}
+
+func TestAdminMiddleware_ValidBearerToken(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	handlerCalled := false
+	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/admin/overview", nil)
+	req.Header.Set("Authorization", "Bearer admin-token-123")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for valid admin bearer token, got %d", w.Code)
+	}
+	if !handlerCalled {
+		t.Error("downstream handler should have been called")
+	}
+}
+
+func TestAdminMiddleware_EmptyAdminTokenFallsBackToBearer(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	handlerCalled := false
+	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "")
+	req.Header.Set("Authorization", "Bearer admin-token-123")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for empty X-Admin-Token with valid bearer fallback, got %d", w.Code)
+	}
+	if !handlerCalled {
+		t.Error("downstream handler should have been called")
+	}
+}
+
+func TestAdminMiddleware_XAdminTokenPrecedenceOverBearer(t *testing.T) {
+	cfg := testConfig()
+	s := NewStore(cfg, nil)
+
+	handler := s.AdminMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach downstream handler when X-Admin-Token is invalid")
+	}))
+
+	req := httptest.NewRequest("GET", "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "wrong-token")
+	req.Header.Set("Authorization", "Bearer admin-token-123")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 when X-Admin-Token is invalid, got %d", w.Code)
+	}
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "invalid admin token" {
+		t.Errorf("unexpected error message: %q", body["error"])
 	}
 }
 

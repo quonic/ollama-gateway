@@ -83,6 +83,64 @@ func TestDashboardLoginFlow(t *testing.T) {
 	}
 }
 
+func TestDashboardAuth_AllowsAdminBearerToken(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	req.Header.Set("Authorization", "Bearer super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected overview with admin bearer token, got %d", resp.Code)
+	}
+}
+
+func TestDashboardAuth_XAdminTokenPrecedenceOverBearer(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "wrong-token")
+	req.Header.Set("Authorization", "Bearer super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden when X-Admin-Token is invalid, got %d", resp.Code)
+	}
+	if !strings.Contains(resp.Body.String(), "Admin Login") {
+		t.Fatalf("expected login page on auth failure, got %q", resp.Body.String())
+	}
+}
+
 func TestOverviewShowsTLSStatusCard(t *testing.T) {
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "tls-cert.pem")
