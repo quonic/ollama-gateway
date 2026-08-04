@@ -28,12 +28,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -51,7 +51,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ollama-gateway-packages-${{ matrix.arch }}-${{ github.ref_name }}-${{ github.sha }}
+          name: ollama-gateway-packages-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: bin/packages/*
           if-no-files-found: error
           retention-days: 14
