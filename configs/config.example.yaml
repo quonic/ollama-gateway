@@ -25,28 +25,28 @@ rate_limiting:
   # redis_timeout_sec: 2
   # redis_fallback_to_local: true
 
-backends:
-  - name: "local-gpu"
-    url: "http://127.0.0.1:11434"
-    weight: 10
-    timeout: 120s
-    health_check_path: "/api/version" # optional; defaults to /api/version
-    headers:
-      # Optional extra headers sent to this backend on every request
-      X-Backend-Tag: "local-gpu"
+# backends:
+#   - name: "local-gpu"
+#     url: "http://127.0.0.1:11434"
+#     weight: 10
+#     timeout: 120s
+#     health_check_path: "/api/version" # optional; defaults to /api/version
+#     headers:
+#       # Optional extra headers sent to this backend on every request
+#       X-Backend-Tag: "local-gpu"
 
-models:
-  models:
-    llama3:
-      name: "llama3"
-      backends:
-        - backend: local-gpu
-          weight: 10
-    qwen2.5:
-      name: "qwen2.5"
-      backends:
-        - backend: local-gpu
-          weight: 5
+# models:
+#   models:
+#     llama3:
+#       name: "llama3"
+#       backends:
+#         - backend: local-gpu
+#           weight: 10
+#     qwen2.5:
+#       name: "qwen2.5"
+#       backends:
+#         - backend: local-gpu
+#           weight: 5
 
 health_check:
   interval_seconds: 10 # how often to check each backend (default: 10)
@@ -56,25 +56,25 @@ health_check:
 users:
   # Optional bootstrap users imported to SQLite when api_users is empty.
   # After startup, manage users in /admin/users instead of editing YAML.
-  "user-alice":
-    api_key_hash: "" # echo -n "alice-secret-key" | sha256sum
-    rate_limit:
-      rate: 10.0 # tokens/sec refill
-      burst: 50 # max burst capacity
-      ttl: 1h # bucket cleanup TTL when idle
+  # "user-alice":
+  #   api_key_hash: "" # echo -n "alice-secret-key" | sha256sum
+  #   rate_limit:
+  #     rate: 10.0 # tokens/sec refill
+  #     burst: 50 # max burst capacity
+  #     ttl: 1h # bucket cleanup TTL when idle
 
 pricing:
   # Global defaults applied to any model without an explicit pricing entry.
   default_input_per_1m_tokens: 0.0 # USD per 1M input tokens; applies to any unpriced model
   default_output_per_1m_tokens: 0.0 # USD per 1M output tokens
 
-  models:
-    llama3:
-      input_cost_per_1m_tokens: 0.00 # USD per 1M prompt (input) tokens
-      output_cost_per_1m_tokens: 0.00 # USD per 1M eval (output) tokens
-    qwen2.5:
-      input_cost_per_1m_tokens: 0.00
-      output_cost_per_1m_tokens: 0.00
+  # models:
+  #   llama3:
+  #     input_cost_per_1m_tokens: 0.00 # USD per 1M prompt (input) tokens
+  #     output_cost_per_1m_tokens: 0.00 # USD per 1M eval (output) tokens
+  #   qwen2.5:
+  #     input_cost_per_1m_tokens: 0.00
+  #     output_cost_per_1m_tokens: 0.00
 
 database:
   path: ".data/gateway.db" # SQLite database for usage tracking and users
