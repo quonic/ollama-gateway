@@ -146,6 +146,7 @@ const (
 	defaultHealthCheckInterval = 10 // seconds between checks
 	defaultHealthCheckTimeout  = 5  // per-check HTTP timeout in seconds
 	defaultUnhealthyThreshold  = 3  // consecutive failures before unhealthy
+	defaultDatabasePath        = "/var/lib/ollama-gateway/gateway.db"
 )
 
 // Load reads the config from path, applies defaults and validates.
@@ -240,6 +241,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.HealthCheck.UnhealthyThreshold <= 0 {
 		cfg.HealthCheck.UnhealthyThreshold = defaultUnhealthyThreshold
+	}
+	if strings.TrimSpace(cfg.Database.Path) == "" {
+		cfg.Database.Path = defaultDatabasePath
 	}
 }
 

@@ -1,0 +1,38 @@
+:root {
+	--bg: #0a0e23;
+	--bg-alt: #19123a;
+	--panel: #191b37;
+	--panel-soft: #24264a;
+	--ink: #f1eefe;
+	--muted: #b7afd8;
+	--accent: #ff8b5f;
+	--accent-strong: #ffc39d;
+	--accent-soft: #4d2e55;
+	--line: #3e3f6b;
+	--healthy-bg: #2a4a48;
+	--healthy-ink: #a8f0de;
+	--disabled-bg: #4d2c3a;
+	--disabled-ink: #ffc0d4;
+	--shadow: 0 22px 44px rgba(4, 3, 15, 0.45);
+}
+
+body {
+	background:
+		radial-gradient(circle at 18% 10%, rgba(255, 139, 95, 0.18) 0%, transparent 42%),
+		radial-gradient(circle at 78% 22%, rgba(115, 126, 255, 0.22) 0%, transparent 46%),
+		radial-gradient(circle at 82% 84%, rgba(94, 255, 223, 0.12) 0%, transparent 40%),
+		linear-gradient(140deg, var(--bg) 0%, var(--bg-alt) 100%);
+}
+
+.sidebar {
+	background: linear-gradient(170deg, #131738 0%, #2b1f5a 85%);
+}
+
+.brand-mark {
+	background: linear-gradient(145deg, #ffc571, #ff7f89);
+	color: #321842;
+}
+
+.topbar {
+	border-color: rgba(132, 138, 210, 0.5);
+}

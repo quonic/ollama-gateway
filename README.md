@@ -35,8 +35,8 @@ The gateway listens on `0.0.0.0:4080` by default (configurable in the YAML).
 
 Notes:
 
-- `database.path` is required at runtime.
-- If `configs/config.yaml` is missing, the loader can fall back to `configs/config.example.yaml`.
+- If `database.path` is omitted, the gateway defaults to `/var/lib/ollama-gateway/gateway.db`.
+- Config resolution order is `--config`, then `/etc/ollama-gateway/config.yaml` (and its example fallback), then repo-local config paths.
 - On first startup, YAML users and backends can seed database tables when those tables are empty.
 
 ## Screenshots
@@ -69,6 +69,35 @@ Current flags:
 - `--seed-model-catalog`: seed DB model catalog once from YAML if DB catalog is empty
 
 There are no CLI subcommands in the current binary.
+
+## Linux Packages (deb/rpm)
+
+This repo includes nfpm-based packaging for Debian/Ubuntu and Fedora/RHEL/CentOS.
+
+1. Install nfpm:
+
+   ```bash
+   go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+   ```
+
+2. Build packages:
+
+   ```bash
+   ./scripts/build-packages.sh
+   ```
+
+Artifacts are written to `bin/packages/`:
+
+- `ollama-gateway_<version>_linux_<arch>.deb`
+- `ollama-gateway_<version>_linux_<arch>.rpm`
+
+Packaged install layout:
+
+- Binary: `/usr/bin/ollama-gateway`
+- Config: `/etc/ollama-gateway/config.yaml`
+- Example config: `/etc/ollama-gateway/config.yaml.example`
+- Default DB path when unset: `/var/lib/ollama-gateway/gateway.db`
+- Systemd unit: `/usr/lib/systemd/system/ollama-gateway.service`
 
 ## Configuration
 
@@ -159,6 +188,28 @@ Behavior details:
 - Dashboard model and backend mutations persist to SQLite when DB is configured.
 - Runtime model catalog and pricing refresh immediately after dashboard changes.
 - Removed backends are blocked when referenced by active models.
+- Dashboard theme can be switched from the top bar (left of Logout) without full-page reload.
+
+### Dashboard Themes
+
+The current dashboard look is the default theme.
+
+Built-in themes:
+
+- `default`
+- `light`
+- `dark`
+- `matrix`
+- `space`
+
+Custom themes are file-based and discovered automatically from `internal/dashboard/static/themes/*.css`.
+
+1. Add a new CSS file, for example `internal/dashboard/static/themes/sunrise.css`.
+2. Rebuild the binary: `go build -o bin/gateway ./cmd/gateway/`.
+3. Restart the gateway.
+4. Open the dashboard and select the theme from the top-bar dropdown.
+
+Theme selection is stored per browser in a cookie (`admin_theme`).
 
 ## Architecture
 

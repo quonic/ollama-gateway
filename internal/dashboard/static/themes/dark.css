@@ -1,0 +1,43 @@
+:root {
+	--bg: #0c1016;
+	--bg-alt: #151c27;
+	--panel: #1b2533;
+	--panel-soft: #233043;
+	--ink: #e5efff;
+	--muted: #9eb0ca;
+	--accent: #4f90ff;
+	--accent-strong: #89b5ff;
+	--accent-soft: #273f63;
+	--line: #314157;
+	--healthy-bg: #1f3f31;
+	--healthy-ink: #9eddb8;
+	--disabled-bg: #4b2a2b;
+	--disabled-ink: #ffb8bf;
+	--shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+}
+
+body {
+	background:
+		radial-gradient(circle at 15% 12%, rgba(79, 144, 255, 0.18) 0%, transparent 42%),
+		radial-gradient(circle at 88% 84%, rgba(88, 183, 255, 0.16) 0%, transparent 40%),
+		linear-gradient(140deg, var(--bg) 0%, var(--bg-alt) 100%);
+}
+
+.topbar {
+	background: rgba(20, 30, 43, 0.82);
+	border-color: rgba(99, 124, 160, 0.35);
+}
+
+.sidebar {
+	background: linear-gradient(170deg, #0f1a2a 0%, #1b2c44 85%);
+}
+
+input[type="text"],
+input[type="password"],
+input[type="datetime-local"],
+select,
+textarea {
+	background: #192230;
+	color: var(--ink);
+	border-color: #39485f;
+}

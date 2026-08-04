@@ -8,6 +8,11 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/admin/static/style.css">
+    {{ if .ThemeStylesheetHref }}
+    <link id="dashboard-theme-css" rel="stylesheet" href="{{ .ThemeStylesheetHref }}">
+    {{ else }}
+    <style id="dashboard-theme-css"></style>
+    {{ end }}
     <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.js"></script>
   </head>
   <body>
@@ -38,7 +43,17 @@
             <p class="subtitle">{{ .Subtitle }}</p>
             {{ end }}
           </div>
-          <a href="/admin/login" class="ghost-link">Logout</a>
+          <div class="topbar-actions">
+            <label class="theme-switcher" for="dashboard-theme-select">
+              <span>Theme</span>
+              <select id="dashboard-theme-select" class="theme-select" name="theme" hx-post="/admin/theme" hx-trigger="change" hx-target="this" hx-swap="none">
+                {{ range .Themes }}
+                <option value="{{ .ID }}" {{ if eq $.SelectedTheme .ID }}selected{{ end }}>{{ .Label }}</option>
+                {{ end }}
+              </select>
+            </label>
+            <a href="/admin/login" class="ghost-link">Logout</a>
+          </div>
         </header>
         <section class="page-content">
           {{ if eq .Active "overview" }}
@@ -198,6 +213,20 @@
           window.htmx.ajax("GET", nextPath, {
             target: "#overview-results",
             swap: "outerHTML",
+          });
+        });
+
+        document.body.addEventListener("dashboard-theme-updated", (event) => {
+          if (!window.htmx) {
+            return;
+          }
+          const detail = event.detail || {};
+          const fallbackPath = window.location.pathname + window.location.search;
+          const path = typeof detail.path === "string" && detail.path ? detail.path : fallbackPath;
+          window.htmx.ajax("GET", path, {
+            target: ".page-content",
+            swap: "innerHTML",
+            select: ".page-content > *",
           });
         });
       })();

@@ -34,7 +34,7 @@ func main() {
 	config.RegisterFlags(fs, &opts)
 	flag.Parse()
 
-	cfgPath, err := config.ResolveConfigPath(opts, "configs/config.yaml")
+	cfgPath, err := config.ResolveConfigPath(opts, config.DefaultConfigPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)

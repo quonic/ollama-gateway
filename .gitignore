@@ -1,4 +1,4 @@
-bin/gateway
+bin/*
 configs/config.yaml
 .data/gateway.db
 .data/gateway.db-shm
