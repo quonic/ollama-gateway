@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -23,7 +24,7 @@ import (
 	"ollama-gateway/internal/usage"
 )
 
-//go:embed templates/*.html static/*
+//go:embed templates/*.html static
 var dashboardFS embed.FS
 
 type Handler struct {
@@ -56,6 +57,18 @@ const (
 type state struct {
 	disabledBackends map[string]bool
 }
+
+type ThemeOption struct {
+	ID    string
+	Label string
+}
+
+const (
+	defaultThemeID       = "default"
+	adminThemeCookieName = "admin_theme"
+)
+
+var requiredThemeIDs = []string{"light", "dark", "matrix", "space"}
 
 func NewHandler(cfg *config.Config, authStore *auth.Store, usageStore *usage.Store, templates *template.Template) (*Handler, error) {
 	h := &Handler{
@@ -194,6 +207,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.renderLogsPartial(w, r)
 	case "backends/health":
 		h.renderBackendHealth(w, r)
+	case "theme":
+		if r.Method != http.MethodPost {
+			h.httpError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.handleThemeSelection(w, r)
 	default:
 		if strings.HasPrefix(path, "backends/toggle/") {
 			h.handleBackendToggle(w, r, path)
@@ -337,7 +356,7 @@ func (h *Handler) overviewViewData(r *http.Request) map[string]any {
 			"LastError":    fallbackValue(reloadStatus.LastError, "none"),
 		}
 	}
-	return data
+	return h.withThemeData(r, data)
 }
 
 func fallbackValue(value string, fallback string) string {
@@ -355,10 +374,10 @@ func formatOptionalTimestamp(ts time.Time) string {
 }
 
 func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
-	h.renderModelsPage(w, "", "")
+	h.renderModelsPage(w, r, "", "")
 }
 
-func (h *Handler) renderModelsPage(w http.ResponseWriter, formError, formSuccess string) {
+func (h *Handler) renderModelsPage(w http.ResponseWriter, r *http.Request, formError, formSuccess string) {
 	models := h.currentModelCatalog()
 	users := h.usersSnapshot()
 	allUsers := make([]string, 0, len(users))
@@ -426,6 +445,7 @@ func (h *Handler) renderModelsPage(w http.ResponseWriter, formError, formSuccess
 		"FormError":         formError,
 		"FormSuccess":       formSuccess,
 	}
+	data = h.withThemeData(r, data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "models.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -433,10 +453,10 @@ func (h *Handler) renderModelsPage(w http.ResponseWriter, formError, formSuccess
 }
 
 func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
-	h.renderBackendsPage(w, "", "", "")
+	h.renderBackendsPage(w, r, "", "", "")
 }
 
-func (h *Handler) renderBackendsPage(w http.ResponseWriter, formError, formSuccess, pendingRemove string) {
+func (h *Handler) renderBackendsPage(w http.ResponseWriter, r *http.Request, formError, formSuccess, pendingRemove string) {
 	viewBackends := make([]config.Backend, len(h.cfg.Backends))
 	copy(viewBackends, h.cfg.Backends)
 	sort.Slice(viewBackends, func(i, j int) bool {
@@ -454,6 +474,7 @@ func (h *Handler) renderBackendsPage(w http.ResponseWriter, formError, formSucce
 		"FormSuccess":      formSuccess,
 		"PendingRemove":    pendingRemove,
 	}
+	data = h.withThemeData(r, data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "backends.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -461,10 +482,10 @@ func (h *Handler) renderBackendsPage(w http.ResponseWriter, formError, formSucce
 }
 
 func (h *Handler) renderUsers(w http.ResponseWriter, r *http.Request) {
-	h.renderUsersPage(w, "", "", "", "")
+	h.renderUsersPage(w, r, "", "", "", "")
 }
 
-func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generatedHash, formError, formSuccess string) {
+func (h *Handler) renderUsersPage(w http.ResponseWriter, r *http.Request, generatedKey, generatedHash, formError, formSuccess string) {
 	users := h.usersSnapshot()
 	viewUsers := make([]map[string]any, 0, len(users))
 	for id, uc := range users {
@@ -498,6 +519,7 @@ func (h *Handler) renderUsersPage(w http.ResponseWriter, generatedKey, generated
 		"FormError":        formError,
 		"FormSuccess":      formSuccess,
 	}
+	data = h.withThemeData(r, data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "users.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -542,7 +564,198 @@ func (h *Handler) logsViewData(r *http.Request) map[string]any {
 			data["Analytics"] = analytics
 		}
 	}
+	return h.withThemeData(r, data)
+}
+
+func (h *Handler) withThemeData(r *http.Request, data map[string]any) map[string]any {
+	themes := h.availableThemes()
+	selectedTheme := selectedThemeFromRequest(r, themes)
+	data["Themes"] = themes
+	data["SelectedTheme"] = selectedTheme
+	data["ThemeStylesheetHref"] = themeStylesheetHref(selectedTheme)
 	return data
+}
+
+func (h *Handler) availableThemes() []ThemeOption {
+	themeIDs := map[string]bool{defaultThemeID: true}
+	for _, themeID := range requiredThemeIDs {
+		themeIDs[themeID] = true
+	}
+
+	entries, err := dashboardFS.ReadDir("static/themes")
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if strings.ToLower(filepath.Ext(entry.Name())) != ".css" {
+				continue
+			}
+			themeID := sanitizeThemeID(strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name())))
+			if themeID == "" || themeID == defaultThemeID {
+				continue
+			}
+			themeIDs[themeID] = true
+		}
+	}
+
+	orderedThemeIDs := make([]string, 0, len(themeIDs))
+	for themeID := range themeIDs {
+		if themeID == defaultThemeID {
+			continue
+		}
+		orderedThemeIDs = append(orderedThemeIDs, themeID)
+	}
+	sort.Strings(orderedThemeIDs)
+
+	options := make([]ThemeOption, 0, len(orderedThemeIDs)+1)
+	options = append(options, ThemeOption{ID: defaultThemeID, Label: "Default"})
+	for _, themeID := range orderedThemeIDs {
+		options = append(options, ThemeOption{ID: themeID, Label: themeLabel(themeID)})
+	}
+	return options
+}
+
+func selectedThemeFromRequest(r *http.Request, available []ThemeOption) string {
+	allowed := make(map[string]bool, len(available))
+	for _, option := range available {
+		allowed[option.ID] = true
+	}
+	if r != nil {
+		if cookie, err := r.Cookie(adminThemeCookieName); err == nil {
+			themeID := sanitizeThemeID(cookie.Value)
+			if allowed[themeID] {
+				return themeID
+			}
+		}
+	}
+	return defaultThemeID
+}
+
+func themeStylesheetHref(themeID string) string {
+	if sanitizeThemeID(themeID) == "" || themeID == defaultThemeID {
+		return ""
+	}
+	return "/admin/static/themes/" + themeID + ".css"
+}
+
+func sanitizeThemeID(raw string) string {
+	themeID := strings.ToLower(strings.TrimSpace(raw))
+	if themeID == "" {
+		return ""
+	}
+	for _, r := range themeID {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			continue
+		}
+		return ""
+	}
+	return themeID
+}
+
+func themeLabel(themeID string) string {
+	switch themeID {
+	case "light":
+		return "Light"
+	case "dark":
+		return "Dark"
+	case "matrix":
+		return "Matrix"
+	case "space":
+		return "Space"
+	default:
+		parts := strings.Split(themeID, "-")
+		for i, part := range parts {
+			if part == "" {
+				continue
+			}
+			parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		}
+		return strings.Join(parts, " ")
+	}
+}
+
+func (h *Handler) handleThemeSelection(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.httpError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+
+	themes := h.availableThemes()
+	requestedTheme := sanitizeThemeID(r.FormValue("theme"))
+	selectedTheme := defaultThemeID
+	for _, option := range themes {
+		if option.ID == requestedTheme {
+			selectedTheme = requestedTheme
+			break
+		}
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:   adminThemeCookieName,
+		Value:  selectedTheme,
+		Path:   "/admin",
+		MaxAge: 60 * 60 * 24 * 365,
+	})
+
+	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
+		refreshPath := themeRefreshPath(r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("HX-Trigger", fmt.Sprintf(`{"dashboard-theme-updated":{"path":%q}}`, refreshPath))
+		_, _ = fmt.Fprint(w, themeHeadOOBElement(selectedTheme))
+		return
+	}
+
+	http.Redirect(w, r, themeRefreshPath(r), http.StatusSeeOther)
+}
+
+func themeHeadOOBElement(selectedTheme string) string {
+	href := themeStylesheetHref(selectedTheme)
+	if href == "" {
+		return `<style id="dashboard-theme-css" hx-swap-oob="outerHTML"></style>`
+	}
+	return fmt.Sprintf(`<link id="dashboard-theme-css" rel="stylesheet" href="%s" hx-swap-oob="outerHTML">`, href)
+}
+
+func themeRefreshPath(r *http.Request) string {
+	if r == nil {
+		return "/admin/overview"
+	}
+	if path := normalizeAdminPath(r.Header.Get("HX-Current-URL")); path != "" {
+		return path
+	}
+	if path := normalizeAdminPath(r.Referer()); path != "" {
+		return path
+	}
+	return "/admin/overview"
+}
+
+func normalizeAdminPath(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return ""
+	}
+	path := parsed.Path
+	if path == "" {
+		path = trimmed
+	}
+	if path == "/admin" || path == "/admin/" {
+		path = "/admin/overview"
+	}
+	if !strings.HasPrefix(path, "/admin/") {
+		return ""
+	}
+	if path == "/admin/theme" {
+		return "/admin/overview"
+	}
+	if parsed.RawQuery == "" {
+		return path
+	}
+	return path + "?" + parsed.RawQuery
 }
 
 func parseLogsListOptions(r *http.Request) usage.ListOptions {
@@ -680,63 +893,63 @@ func (h *Handler) handleBackendAction(w http.ResponseWriter, r *http.Request) {
 	action := strings.TrimSpace(r.FormValue("action"))
 	name := strings.TrimSpace(r.FormValue("backend_name"))
 	if name == "" {
-		h.renderBackendsPage(w, "Backend name is required.", "", "")
+		h.renderBackendsPage(w, r, "Backend name is required.", "", "")
 		return
 	}
 
 	if action == "remove-intent" {
 		if _, exists := h.backendByName(name); !exists {
-			h.renderBackendsPage(w, fmt.Sprintf("Backend %q not found.", name), "", "")
+			h.renderBackendsPage(w, r, fmt.Sprintf("Backend %q not found.", name), "", "")
 			return
 		}
 		blockingModels := h.modelsReferencingBackend(name)
 		if len(blockingModels) > 0 {
-			h.renderBackendsPage(w, fmt.Sprintf("Cannot remove backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "", "")
+			h.renderBackendsPage(w, r, fmt.Sprintf("Cannot remove backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "", "")
 			return
 		}
-		h.renderBackendsPage(w, "", fmt.Sprintf("Confirm removal for backend %q.", name), name)
+		h.renderBackendsPage(w, r, "", fmt.Sprintf("Confirm removal for backend %q.", name), name)
 		return
 	}
 
 	if action == "remove-confirm" {
 		if strings.TrimSpace(r.FormValue("confirm_backend_name")) != name {
-			h.renderBackendsPage(w, "Confirmation name does not match backend name.", "", name)
+			h.renderBackendsPage(w, r, "Confirmation name does not match backend name.", "", name)
 			return
 		}
 		blockingModels := h.modelsReferencingBackend(name)
 		if len(blockingModels) > 0 {
-			h.renderBackendsPage(w, fmt.Sprintf("Cannot remove backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "", "")
+			h.renderBackendsPage(w, r, fmt.Sprintf("Cannot remove backend %q. Reassign these models first: %s", name, strings.Join(blockingModels, ", ")), "", "")
 			return
 		}
 		if err := h.removeBackend(name); err != nil {
-			h.renderBackendsPage(w, fmt.Sprintf("Failed to remove backend %q: %v", name, err), "", "")
+			h.renderBackendsPage(w, r, fmt.Sprintf("Failed to remove backend %q: %v", name, err), "", "")
 			return
 		}
-		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q removed.", name), "")
+		h.renderBackendsPage(w, r, "", fmt.Sprintf("Backend %q removed.", name), "")
 		return
 	}
 
 	backendCfg, err := h.buildBackendConfigFromForm(r)
 	if err != nil {
-		h.renderBackendsPage(w, fmt.Sprintf("Invalid backend settings for %q: %v", name, err), "", "")
+		h.renderBackendsPage(w, r, fmt.Sprintf("Invalid backend settings for %q: %v", name, err), "", "")
 		return
 	}
 
 	switch action {
 	case "create":
 		if err := h.createBackend(backendCfg); err != nil {
-			h.renderBackendsPage(w, fmt.Sprintf("Failed to create backend %q: %v", name, err), "", "")
+			h.renderBackendsPage(w, r, fmt.Sprintf("Failed to create backend %q: %v", name, err), "", "")
 			return
 		}
-		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q created.", name), "")
+		h.renderBackendsPage(w, r, "", fmt.Sprintf("Backend %q created.", name), "")
 	case "update":
 		if err := h.updateBackend(backendCfg); err != nil {
-			h.renderBackendsPage(w, fmt.Sprintf("Failed to update backend %q: %v", name, err), "", "")
+			h.renderBackendsPage(w, r, fmt.Sprintf("Failed to update backend %q: %v", name, err), "", "")
 			return
 		}
-		h.renderBackendsPage(w, "", fmt.Sprintf("Backend %q updated.", name), "")
+		h.renderBackendsPage(w, r, "", fmt.Sprintf("Backend %q updated.", name), "")
 	default:
-		h.renderBackendsPage(w, "Unknown backend action.", "", "")
+		h.renderBackendsPage(w, r, "Unknown backend action.", "", "")
 	}
 }
 
@@ -913,76 +1126,76 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 	if action == "generate" {
 		rawKey := generateAPIKey()
 		hash := auth.HashAPIKey(rawKey)
-		h.renderUsersPage(w, rawKey, hash, "", "")
+		h.renderUsersPage(w, r, rawKey, hash, "", "")
 		return
 	}
 
 	if action == "rotate" {
 		userName := strings.TrimSpace(r.FormValue("user_name"))
 		if userName == "" {
-			h.renderUsersPage(w, "", "", "User name is required for key rotation.", "")
+			h.renderUsersPage(w, r, "", "", "User name is required for key rotation.", "")
 			return
 		}
 		rawKey := generateAPIKey()
 		rotatedRaw, rotatedHash, err := h.authStore.RotateUserKey(userName, rawKey)
 		if err != nil {
 			if errors.Is(err, auth.ErrUserNotFound) {
-				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q not found.", userName), "")
+				h.renderUsersPage(w, r, "", "", fmt.Sprintf("User %q not found.", userName), "")
 				return
 			}
-			h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to rotate key for user %q: %v", userName, err), "")
+			h.renderUsersPage(w, r, "", "", fmt.Sprintf("Failed to rotate key for user %q: %v", userName, err), "")
 			return
 		}
-		h.renderUsersPage(w, rotatedRaw, rotatedHash, "", fmt.Sprintf("API key rotated for user %q.", userName))
+		h.renderUsersPage(w, r, rotatedRaw, rotatedHash, "", fmt.Sprintf("API key rotated for user %q.", userName))
 		return
 	}
 
 	if action == "deactivate" {
 		userName := strings.TrimSpace(r.FormValue("user_name"))
 		if userName == "" {
-			h.renderUsersPage(w, "", "", "User name is required for deactivation.", "")
+			h.renderUsersPage(w, r, "", "", "User name is required for deactivation.", "")
 			return
 		}
 
 		if err := h.authStore.DeactivateUser(userName); err != nil {
 			if errors.Is(err, auth.ErrUserNotFound) {
-				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q not found.", userName), "")
+				h.renderUsersPage(w, r, "", "", fmt.Sprintf("User %q not found.", userName), "")
 				return
 			}
 			if errors.Is(err, auth.ErrUserDeactivated) {
-				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q is already deactivated.", userName), "")
+				h.renderUsersPage(w, r, "", "", fmt.Sprintf("User %q is already deactivated.", userName), "")
 				return
 			}
-			h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to deactivate user %q: %v", userName, err), "")
+			h.renderUsersPage(w, r, "", "", fmt.Sprintf("Failed to deactivate user %q: %v", userName, err), "")
 			return
 		}
 
-		h.renderUsersPage(w, "", "", "", fmt.Sprintf("User %q deactivated.", userName))
+		h.renderUsersPage(w, r, "", "", "", fmt.Sprintf("User %q deactivated.", userName))
 		return
 	}
 
 	if action == "update" {
 		userName := strings.TrimSpace(r.FormValue("user_name"))
 		if userName == "" {
-			h.renderUsersPage(w, "", "", "User name is required for updates.", "")
+			h.renderUsersPage(w, r, "", "", "User name is required for updates.", "")
 			return
 		}
 
 		uc, err := h.buildUserConfigFromForm(r)
 		if err != nil {
-			h.renderUsersPage(w, "", "", fmt.Sprintf("Invalid user settings for %q: %v", userName, err), "")
+			h.renderUsersPage(w, r, "", "", fmt.Sprintf("Invalid user settings for %q: %v", userName, err), "")
 			return
 		}
 		if err := h.authStore.UpdateUser(userName, uc); err != nil {
 			if errors.Is(err, auth.ErrUserNotFound) {
-				h.renderUsersPage(w, "", "", fmt.Sprintf("User %q not found.", userName), "")
+				h.renderUsersPage(w, r, "", "", fmt.Sprintf("User %q not found.", userName), "")
 				return
 			}
-			h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to update user %q: %v", userName, err), "")
+			h.renderUsersPage(w, r, "", "", fmt.Sprintf("Failed to update user %q: %v", userName, err), "")
 			return
 		}
 
-		h.renderUsersPage(w, "", "", "", fmt.Sprintf("User %q updated.", userName))
+		h.renderUsersPage(w, r, "", "", "", fmt.Sprintf("User %q updated.", userName))
 		return
 	}
 
@@ -993,7 +1206,7 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 
 	userName := strings.TrimSpace(r.FormValue("user_name"))
 	if userName == "" {
-		h.renderUsersPage(w, "", "", "User name is required.", "")
+		h.renderUsersPage(w, r, "", "", "User name is required.", "")
 		return
 	}
 
@@ -1001,20 +1214,20 @@ func (h *Handler) handleUserAction(w http.ResponseWriter, r *http.Request) {
 	hash := auth.HashAPIKey(rawKey)
 	uc, err := h.buildUserConfigFromForm(r)
 	if err != nil {
-		h.renderUsersPage(w, "", "", fmt.Sprintf("Invalid user settings for %q: %v", userName, err), "")
+		h.renderUsersPage(w, r, "", "", fmt.Sprintf("Invalid user settings for %q: %v", userName, err), "")
 		return
 	}
 	uc.APIKeyHash = hash
 	if err := h.authStore.CreateUser(userName, uc); err != nil {
 		if errors.Is(err, auth.ErrUserExists) {
-			h.renderUsersPage(w, "", "", fmt.Sprintf("User %q already exists.", userName), "")
+			h.renderUsersPage(w, r, "", "", fmt.Sprintf("User %q already exists.", userName), "")
 			return
 		}
-		h.renderUsersPage(w, "", "", fmt.Sprintf("Failed to create user %q: %v", userName, err), "")
+		h.renderUsersPage(w, r, "", "", fmt.Sprintf("Failed to create user %q: %v", userName, err), "")
 		return
 	}
 
-	h.renderUsersPage(w, rawKey, hash, "", fmt.Sprintf("User %q created.", userName))
+	h.renderUsersPage(w, r, rawKey, hash, "", fmt.Sprintf("User %q created.", userName))
 }
 
 func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
@@ -1026,34 +1239,34 @@ func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
 	action := strings.TrimSpace(r.FormValue("action"))
 	modelName := strings.TrimSpace(r.FormValue("model_name"))
 	if modelName == "" {
-		h.renderModelsPage(w, "Model name is required.", "")
+		h.renderModelsPage(w, r, "Model name is required.", "")
 		return
 	}
 
 	if action == "delete" {
 		if err := h.deleteModel(modelName); err != nil {
-			h.renderModelsPage(w, fmt.Sprintf("Failed to delete model %q: %v", modelName, err), "")
+			h.renderModelsPage(w, r, fmt.Sprintf("Failed to delete model %q: %v", modelName, err), "")
 			return
 		}
 		if err := h.persistModelMutation("delete", modelName, nil); err != nil {
-			h.renderModelsPage(w, fmt.Sprintf("Model %q removed in-memory but failed to persist mutation: %v", modelName, err), "")
+			h.renderModelsPage(w, r, fmt.Sprintf("Model %q removed in-memory but failed to persist mutation: %v", modelName, err), "")
 			return
 		}
 		if err := h.persistModelPricing(); err != nil {
-			h.renderModelsPage(w, fmt.Sprintf("Model %q deleted but failed to persist pricing changes: %v", modelName, err), "")
+			h.renderModelsPage(w, r, fmt.Sprintf("Model %q deleted but failed to persist pricing changes: %v", modelName, err), "")
 			return
 		}
 		if err := h.reloadModelRuntimeFromStore(); err != nil {
-			h.renderModelsPage(w, fmt.Sprintf("Model %q deleted but failed to refresh runtime catalog: %v", modelName, err), "")
+			h.renderModelsPage(w, r, fmt.Sprintf("Model %q deleted but failed to refresh runtime catalog: %v", modelName, err), "")
 			return
 		}
-		h.renderModelsPage(w, "", fmt.Sprintf("Model %q deleted.", modelName))
+		h.renderModelsPage(w, r, "", fmt.Sprintf("Model %q deleted.", modelName))
 		return
 	}
 
 	refs, err := parseModelBackendRefs(r.FormValue("backend_weights"), h.cfg.Backends)
 	if err != nil {
-		h.renderModelsPage(w, fmt.Sprintf("Invalid backend refs for model %q: %v", modelName, err), "")
+		h.renderModelsPage(w, r, fmt.Sprintf("Invalid backend refs for model %q: %v", modelName, err), "")
 		return
 	}
 
@@ -1067,7 +1280,7 @@ func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
 
 	inputCost, outputCost, err := parseModelPricingForm(r)
 	if err != nil {
-		h.renderModelsPage(w, fmt.Sprintf("Invalid pricing for model %q: %v", modelName, err), "")
+		h.renderModelsPage(w, r, fmt.Sprintf("Invalid pricing for model %q: %v", modelName, err), "")
 		return
 	}
 
@@ -1083,43 +1296,43 @@ func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "create":
 		if err := h.createModel(modelName, entry); err != nil {
-			h.renderModelsPage(w, fmt.Sprintf("Failed to create model %q: %v", modelName, err), "")
+			h.renderModelsPage(w, r, fmt.Sprintf("Failed to create model %q: %v", modelName, err), "")
 			return
 		}
 	case "update":
 		if err := h.updateModel(modelName, entry); err != nil {
-			h.renderModelsPage(w, fmt.Sprintf("Failed to update model %q: %v", modelName, err), "")
+			h.renderModelsPage(w, r, fmt.Sprintf("Failed to update model %q: %v", modelName, err), "")
 			return
 		}
 	default:
-		h.renderModelsPage(w, "Unknown model action.", "")
+		h.renderModelsPage(w, r, "Unknown model action.", "")
 		return
 	}
 
 	h.setModelPricing(modelName, inputCost, outputCost)
 	if err := h.applyModelAccess(modelName, limitAccess, selectedUsers); err != nil {
-		h.renderModelsPage(w, fmt.Sprintf("Saved model %q but failed to apply user access: %v", modelName, err), "")
+		h.renderModelsPage(w, r, fmt.Sprintf("Saved model %q but failed to apply user access: %v", modelName, err), "")
 		return
 	}
 	persistedEntry := h.currentModelCatalog()[modelName]
 	if err := h.persistModelMutation(action, modelName, &persistedEntry); err != nil {
-		h.renderModelsPage(w, fmt.Sprintf("Saved model %q in-memory but failed to persist mutation: %v", modelName, err), "")
+		h.renderModelsPage(w, r, fmt.Sprintf("Saved model %q in-memory but failed to persist mutation: %v", modelName, err), "")
 		return
 	}
 	if err := h.persistModelPricing(); err != nil {
-		h.renderModelsPage(w, fmt.Sprintf("Saved model %q but failed to persist pricing changes: %v", modelName, err), "")
+		h.renderModelsPage(w, r, fmt.Sprintf("Saved model %q but failed to persist pricing changes: %v", modelName, err), "")
 		return
 	}
 	if err := h.reloadModelRuntimeFromStore(); err != nil {
-		h.renderModelsPage(w, fmt.Sprintf("Saved model %q but failed to refresh runtime catalog: %v", modelName, err), "")
+		h.renderModelsPage(w, r, fmt.Sprintf("Saved model %q but failed to refresh runtime catalog: %v", modelName, err), "")
 		return
 	}
 
 	if action == "create" {
-		h.renderModelsPage(w, "", fmt.Sprintf("Model %q created.", modelName))
+		h.renderModelsPage(w, r, "", fmt.Sprintf("Model %q created.", modelName))
 		return
 	}
-	h.renderModelsPage(w, "", fmt.Sprintf("Model %q updated.", modelName))
+	h.renderModelsPage(w, r, "", fmt.Sprintf("Model %q updated.", modelName))
 }
 
 func (h *Handler) createModel(modelName string, entry config.ModelEntry) error {

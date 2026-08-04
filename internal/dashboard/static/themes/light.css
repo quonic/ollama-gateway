@@ -1,0 +1,33 @@
+:root {
+	--bg: #f6f7fb;
+	--bg-alt: #ffffff;
+	--panel: #ffffff;
+	--panel-soft: #f5f7fb;
+	--ink: #1a2a3a;
+	--muted: #5d6f80;
+	--accent: #2e6fd3;
+	--accent-strong: #1f53a4;
+	--accent-soft: #dbe7ff;
+	--line: #d7e2f1;
+	--healthy-bg: #daf3e6;
+	--healthy-ink: #1b5f3d;
+	--disabled-bg: #fde7e8;
+	--disabled-ink: #8a2d33;
+	--shadow: 0 18px 45px rgba(31, 61, 107, 0.1);
+}
+
+body {
+	background:
+		radial-gradient(circle at 8% 16%, #d6e7ff 0%, transparent 40%),
+		radial-gradient(circle at 90% 82%, #d9fff2 0%, transparent 42%),
+		linear-gradient(140deg, var(--bg) 0%, var(--bg-alt) 100%);
+}
+
+.sidebar {
+	background: linear-gradient(170deg, #204a7c 0%, #2f659f 85%);
+}
+
+.brand-mark {
+	background: linear-gradient(145deg, #9ec4ff, #63e6cb);
+	color: #0f2b49;
+}

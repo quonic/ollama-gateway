@@ -1497,3 +1497,173 @@ func TestBackendRemoveConfirmRequiresExactName(t *testing.T) {
 		t.Fatalf("expected backend to remain configured when confirmation fails")
 	}
 }
+
+func TestThemeSelectorRendersAndDefaultsToBaseStyle(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected overview page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "id=\"dashboard-theme-select\"") {
+		t.Fatalf("expected theme selector in topbar, got %q", body)
+	}
+	if !strings.Contains(body, "<option value=\"default\" selected>Default</option>") {
+		t.Fatalf("expected default theme option selected, got %q", body)
+	}
+	if !strings.Contains(body, "<option value=\"light\"") || !strings.Contains(body, "<option value=\"dark\"") || !strings.Contains(body, "<option value=\"matrix\"") || !strings.Contains(body, "<option value=\"space\"") {
+		t.Fatalf("expected built-in theme options, got %q", body)
+	}
+	if strings.Contains(body, "href=\"/admin/static/themes/default.css\"") {
+		t.Fatalf("did not expect a default override stylesheet, got %q", body)
+	}
+}
+
+func TestThemeSelectionHTMXSetsCookieAndReturnsOOBSwap(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Users:    map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("theme", "dark")
+	req := httptest.NewRequest(http.MethodPost, "/admin/theme", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Current-URL", "http://localhost/admin/backends?view=compact")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected HTMX theme response, got %d", resp.Code)
+	}
+	trigger := resp.Header().Get("HX-Trigger")
+	if !strings.Contains(trigger, "dashboard-theme-updated") || !strings.Contains(trigger, "/admin/backends?view=compact") {
+		t.Fatalf("expected HX-Trigger refresh metadata, got %q", trigger)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "id=\"dashboard-theme-css\"") || !strings.Contains(body, "hx-swap-oob=\"outerHTML\"") {
+		t.Fatalf("expected out-of-band theme element swap, got %q", body)
+	}
+	if !strings.Contains(body, "href=\"/admin/static/themes/dark.css\"") {
+		t.Fatalf("expected dark theme stylesheet link, got %q", body)
+	}
+
+	var themeCookie *http.Cookie
+	for _, c := range resp.Result().Cookies() {
+		if c.Name == "admin_theme" {
+			themeCookie = c
+			break
+		}
+	}
+	if themeCookie == nil {
+		t.Fatal("expected admin_theme cookie")
+	}
+	if themeCookie.Value != "dark" {
+		t.Fatalf("expected dark cookie value, got %q", themeCookie.Value)
+	}
+	if themeCookie.Path != "/admin" {
+		t.Fatalf("expected /admin cookie path, got %q", themeCookie.Path)
+	}
+
+	overviewReq := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	overviewReq.Header.Set("X-Admin-Token", "super-secret")
+	overviewReq.AddCookie(themeCookie)
+	overviewResp := httptest.NewRecorder()
+	handler.ServeHTTP(overviewResp, overviewReq)
+
+	if overviewResp.Code != http.StatusOK {
+		t.Fatalf("expected themed overview render, got %d", overviewResp.Code)
+	}
+	rendered := overviewResp.Body.String()
+	if !strings.Contains(rendered, "href=\"/admin/static/themes/dark.css\"") {
+		t.Fatalf("expected selected dark theme stylesheet in rendered page, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "<option value=\"dark\" selected>Dark</option>") {
+		t.Fatalf("expected dark option selected, got %q", rendered)
+	}
+}
+
+func TestThemeSelectionInvalidFallsBackToDefault(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Users:    map[string]config.UserConfig{"demo": {APIKeyHash: auth.HashAPIKey("demo-key")}},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("theme", "../../etc/passwd")
+	req := httptest.NewRequest(http.MethodPost, "/admin/theme", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected HTMX fallback response, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "<style id=\"dashboard-theme-css\"") {
+		t.Fatalf("expected default style placeholder for invalid theme, got %q", body)
+	}
+	for _, c := range resp.Result().Cookies() {
+		if c.Name == "admin_theme" && c.Value != "default" {
+			t.Fatalf("expected invalid theme to fallback to default cookie, got %q", c.Value)
+		}
+	}
+}
+
+func TestServeStaticThemeFileHasCSSContentType(t *testing.T) {
+	cfg := &config.Config{Admin: config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")}}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/static/themes/dark.css", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected static theme file, got %d", resp.Code)
+	}
+	if got := resp.Header().Get("Content-Type"); !strings.Contains(got, "text/css") {
+		t.Fatalf("expected css content type, got %q", got)
+	}
+	if !strings.Contains(resp.Body.String(), ":root") {
+		t.Fatalf("expected css file content, got %q", resp.Body.String())
+	}
+}

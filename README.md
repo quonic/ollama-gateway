@@ -159,6 +159,28 @@ Behavior details:
 - Dashboard model and backend mutations persist to SQLite when DB is configured.
 - Runtime model catalog and pricing refresh immediately after dashboard changes.
 - Removed backends are blocked when referenced by active models.
+- Dashboard theme can be switched from the top bar (left of Logout) without full-page reload.
+
+### Dashboard Themes
+
+The current dashboard look is the default theme.
+
+Built-in themes:
+
+- `default`
+- `light`
+- `dark`
+- `matrix`
+- `space`
+
+Custom themes are file-based and discovered automatically from `internal/dashboard/static/themes/*.css`.
+
+1. Add a new CSS file, for example `internal/dashboard/static/themes/sunrise.css`.
+2. Rebuild the binary: `go build -o bin/gateway ./cmd/gateway/`.
+3. Restart the gateway.
+4. Open the dashboard and select the theme from the top-bar dropdown.
+
+Theme selection is stored per browser in a cookie (`admin_theme`).
 
 ## Architecture
 
