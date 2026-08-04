@@ -1,0 +1,39 @@
+name: ollama-gateway
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: "Ollama Gateway Maintainers"
+description: "API gateway for Ollama with auth, rate limiting, and embedded admin dashboard"
+license: MIT
+homepage: "https://github.com/quonic/ollama-gateway"
+contents:
+  - src: ./bin/ollama-gateway
+    dst: /usr/bin/ollama-gateway
+    file_info:
+      mode: 0755
+  - src: ./configs/config.example.yaml
+    dst: /etc/ollama-gateway/config.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+  - src: ./configs/config.example.yaml
+    dst: /etc/ollama-gateway/config.yaml.example
+    file_info:
+      mode: 0644
+  - src: ./packaging/systemd/ollama-gateway.service
+    dst: /usr/lib/systemd/system/ollama-gateway.service
+    file_info:
+      mode: 0644
+scripts:
+  preinstall: ./packaging/scripts/preinstall.sh
+  postinstall: ./packaging/scripts/postinstall.sh
+  preremove: ./packaging/scripts/preremove.sh
+  postremove: ./packaging/scripts/postremove.sh
+rpm:
+  group: Applications/Internet
+  compression: gzip
+deb:
+  fields:
+    Bugs: "https://github.com/quonic/ollama-gateway/issues"

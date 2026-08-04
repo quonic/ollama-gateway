@@ -64,6 +64,17 @@ func TestValidateTLSPassesWhenReadableFilesExist(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsSetsDatabasePath(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.Database.Path = ""
+
+	applyDefaults(cfg)
+
+	if cfg.Database.Path != defaultDatabasePath {
+		t.Fatalf("expected database path default %q, got %q", defaultDatabasePath, cfg.Database.Path)
+	}
+}
+
 func validConfigForTest() *Config {
 	return &Config{
 		Server: ServerConfig{

@@ -42,3 +42,24 @@ func TestResolveConfigPathFallsBackToExampleConfig(t *testing.T) {
 		t.Fatalf("expected fallback config path %q, got %q", examplePath, resolved)
 	}
 }
+
+func TestResolveConfigPathFallsBackToYamlExampleName(t *testing.T) {
+	tempDir := t.TempDir()
+	defaultDir := filepath.Join(tempDir, "etc", "ollama-gateway")
+	if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+		t.Fatalf("mkdir default dir: %v", err)
+	}
+
+	examplePath := filepath.Join(defaultDir, "config.yaml.example")
+	if err := os.WriteFile(examplePath, []byte("server: {}\n"), 0o644); err != nil {
+		t.Fatalf("write example config: %v", err)
+	}
+
+	resolved, err := ResolveConfigPath(LoaderOptions{}, filepath.Join(defaultDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("ResolveConfigPath returned error: %v", err)
+	}
+	if resolved != examplePath {
+		t.Fatalf("expected fallback config path %q, got %q", examplePath, resolved)
+	}
+}

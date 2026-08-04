@@ -7,6 +7,12 @@ import (
 	"path/filepath"
 )
 
+const (
+	DefaultConfigPath        = "/etc/ollama-gateway/config.yaml"
+	defaultRepoConfigPath    = "configs/config.yaml"
+	defaultRepoExampleConfig = "configs/config.example.yaml"
+)
+
 // LoaderOptions controls how LoadWithFlags behaves.
 type LoaderOptions struct {
 	ConfigFile       string
@@ -28,11 +34,8 @@ func ResolveConfigPath(opts LoaderOptions, defaultPath string) (string, error) {
 		if _, err := os.Stat(opts.ConfigFile); err == nil {
 			return opts.ConfigFile, nil
 		}
-		if dir := filepath.Dir(opts.ConfigFile); dir != "." && dir != "" {
-			candidate := filepath.Join(dir, "config.example.yaml")
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate, nil
-			}
+		if candidate, ok := resolveExampleConfig(filepath.Dir(opts.ConfigFile)); ok {
+			return candidate, nil
 		}
 		return opts.ConfigFile, nil
 	}
@@ -40,17 +43,14 @@ func ResolveConfigPath(opts LoaderOptions, defaultPath string) (string, error) {
 		if _, err := os.Stat(defaultPath); err == nil {
 			return defaultPath, nil
 		}
-		if dir := filepath.Dir(defaultPath); dir != "." && dir != "" {
-			candidate := filepath.Join(dir, "config.example.yaml")
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate, nil
-			}
+		if candidate, ok := resolveExampleConfig(filepath.Dir(defaultPath)); ok {
+			return candidate, nil
 		}
 	}
 
 	candidates := []string{
-		"configs/config.yaml",
-		"configs/config.example.yaml",
+		defaultRepoConfigPath,
+		defaultRepoExampleConfig,
 		filepath.Join("..", "configs", "config.yaml"),
 		filepath.Join("..", "configs", "config.example.yaml"),
 	}
@@ -61,6 +61,21 @@ func ResolveConfigPath(opts LoaderOptions, defaultPath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no config file found; provide --config or create configs/config.yaml")
+}
+
+func resolveExampleConfig(dir string) (string, bool) {
+	if dir == "." || dir == "" {
+		return "", false
+	}
+	for _, candidate := range []string{
+		filepath.Join(dir, "config.example.yaml"),
+		filepath.Join(dir, "config.yaml.example"),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // LoadWithFlags loads configuration from a file path provided via flags or
