@@ -204,7 +204,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) isAuthenticated(r *http.Request) bool {
-	if token := r.Header.Get("X-Admin-Token"); token != "" && h.authStore.CheckAdminToken(token) {
+	if token := auth.AdminTokenFromRequest(r); token != "" && h.authStore.CheckAdminToken(token) {
 		return true
 	}
 	cookie, err := r.Cookie("admin_session")

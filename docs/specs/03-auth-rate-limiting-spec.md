@@ -12,16 +12,30 @@ It covers API key validation, admin token handling, and per-key token bucket rat
 ### 2.1 API Key Format
 
 - Keys are arbitrary strings (minimum 32 characters recommended).
-- Clients provide keys via the `X-API-Key` HTTP header:
+- Clients can provide keys via either `X-API-Key` or `Authorization: Bearer`.
+- Header precedence is deterministic:
+  1. Use `X-API-Key` when present and non-empty.
+  2. Otherwise, fall back to `Authorization: Bearer <api-key-value>`.
+- `Authorization` values that are malformed (for example, `Bearer` without a token)
+  are treated as missing credentials.
+- `X-API-Key` format:
   ```
   X-API-Key: <api-key-value>
+  ```
+- `Authorization` fallback format:
+  ```
+  Authorization: Bearer <api-key-value>
   ```
 - Raw key values are **never** logged, stored in plaintext, or returned by any endpoint.
 
 ### 2.2 Key Validation Process
 
-1. Extract `X-API-Key` from request headers.
-2. If header is missing → return HTTP 401 with body: `{"error": "missing API key"}`.
+1. Extract API credential from request headers using precedence:
+
+- `X-API-Key` (preferred when present and non-empty)
+- `Authorization: Bearer` (fallback when `X-API-Key` is missing or empty)
+
+2. If no valid credential is present → return HTTP 401 with body: `{"error": "missing API key"}`.
 3. Compute SHA-256 hash of the provided raw key value.
 4. Compare against known hashes (from config file or database). Use constant-time comparison
    to prevent timing attacks (`crypto/subtle.ConstantTimeCompare`).
@@ -63,7 +77,10 @@ Separate from regular API keys, administrators authenticate to dashboard routes
 admin_token_hash: "<sha256-hash>" # SHA-256 hash of admin token; required for /admin/* access
 ```
 
-- The admin token is sent via the `X-Admin-Token` header.
+- The admin token can be sent via `X-Admin-Token` or `Authorization: Bearer`.
+- Header precedence is deterministic:
+  1. Use `X-Admin-Token` when present and non-empty.
+  2. Otherwise, fall back to `Authorization: Bearer <admin-token-value>`.
 - If missing or invalid → return HTTP 403 Forbidden (not 401, to distinguish from API key auth).
 - Admin tokens are also validated using constant-time comparison against their SHA-256 hash.
 

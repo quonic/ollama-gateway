@@ -12,11 +12,22 @@ with HTMX for interactivity (no build step required — templates are compiled i
 
 ### Admin Token Requirement
 
-All dashboard routes require a valid admin token sent via HTTP header:
+All dashboard routes require a valid admin credential provided by header.
 
 ```
 X-Admin-Token: <admin-token-value>
 ```
+
+or:
+
+```
+Authorization: Bearer <admin-token-value>
+```
+
+Header precedence is deterministic:
+
+1. Use `X-Admin-Token` when present and non-empty.
+2. Otherwise, fall back to `Authorization: Bearer`.
 
 The gateway validates this against `admin_token_hash` from config (SHA-256 hash + constant-time
 comparison). If missing or invalid, return HTTP **403 Forbidden**.
