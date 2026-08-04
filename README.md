@@ -29,10 +29,6 @@ Implemented now:
 - Distributed/shared rate limiting across gateway instances
 - Config hot-reload from YAML without restart
 
-Not implemented yet:
-
-- Native billing/invoicing workflows (usage and cost tracking only)
-
 ## Quick Start
 
 ```bash
