@@ -14,21 +14,6 @@ Featuring:
 
 Single-binary deployment using `net/http` + `html/template`. No web framework.
 
-## Current Status (2026-08-03)
-
-The project is in an implemented, runnable state with end-to-end request flow and an operational admin dashboard.
-
-Implemented now:
-
-- API key auth (`X-API-Key`) and admin auth (`X-Admin-Token` header or dashboard login cookie)
-- Per-user token-bucket rate limiting with global defaults
-- Model discovery from backend `/api/tags` at startup, with SQLite-backed active catalog
-- Weighted backend routing + health checks + backend reachability guard
-- Usage logging (tokens, duration, model, backend, cost) in SQLite
-- Dashboard CRUD flows for users, models, and backends (persisted to SQLite and applied at runtime)
-- Distributed/shared rate limiting across gateway instances
-- Config hot-reload from YAML without restart
-
 ## Quick Start
 
 ```bash
