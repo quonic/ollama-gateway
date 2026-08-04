@@ -27,11 +27,11 @@ Implemented now:
 - Usage logging (tokens, duration, model, backend, cost) in SQLite
 - Dashboard CRUD flows for users, models, and backends (persisted to SQLite and applied at runtime)
 - Distributed/shared rate limiting across gateway instances
+- Config hot-reload from YAML without restart
 
 Not implemented yet:
 
 - Native billing/invoicing workflows (usage and cost tracking only)
-- Config hot-reload from YAML without restart
 
 ## Quick Start
 
