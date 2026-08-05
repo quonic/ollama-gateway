@@ -14,6 +14,10 @@ Featuring:
 
 Single-binary deployment using `net/http` + `html/template`. No web framework.
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor setup, test expectations, docs/spec update guidance, and pull request requirements.
+
 ## Quick Start
 
 ```bash
