@@ -88,20 +88,7 @@ $msiVersion = Convert-ToMsiVersion -Version $env:VERSION
 $wxsPath = Join-Path $rootDir "packaging\windows\ollama-gateway.wxs"
 $target = Join-Path $rootDir ("bin\packages\ollama-gateway_{0}_windows_{1}.msi" -f $env:VERSION, $goArch)
 
-$wixWorkDir = Join-Path $rootDir "bin\packages\wixsrc"
-New-Item -ItemType Directory -Path $wixWorkDir -Force | Out-Null
-$convertedWxs = Join-Path $wixWorkDir "ollama-gateway.wxs"
-Copy-Item $wxsPath $convertedWxs -Force
-
-Push-Location $wixWorkDir
-& $wix convert ".\ollama-gateway.wxs"
-if ($LASTEXITCODE -ne 0) {
-    Pop-Location
-    throw "WiX source conversion failed"
-}
-Pop-Location
-
-& $wix build -nologo -arch $wixPlatform -d ProductVersion=$msiVersion -d Platform=$wixPlatform -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -o $target $convertedWxs
+& $wix build -nologo -arch $wixPlatform -d ProductVersion=$msiVersion -d Platform=$wixPlatform -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -o $target $wxsPath
 if ($LASTEXITCODE -ne 0) {
     throw "WiX build failed"
 }

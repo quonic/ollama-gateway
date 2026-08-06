@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <?ifndef ProductVersion ?>
     <?define ProductVersion="0.0.0" ?>
   <?endif?>
@@ -7,19 +8,15 @@
     <?define Platform="x64" ?>
   <?endif?>
 
-  <Product
-    Id="*"
+  <Package
     Name="Ollama Gateway"
     Language="1033"
     Version="$(var.ProductVersion)"
     Manufacturer="Ollama Gateway Maintainers"
-    UpgradeCode="0F9CA5FD-1E24-4890-9C17-6D3022913E3D">
-
-    <Package
-      InstallerVersion="500"
-      Compressed="yes"
-      InstallScope="perMachine"
-      Platform="$(var.Platform)" />
+    UpgradeCode="0F9CA5FD-1E24-4890-9C17-6D3022913E3D"
+    InstallerVersion="500"
+    Compressed="yes"
+    Scope="perMachine">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Ollama Gateway is already installed." />
     <MediaTemplate EmbedCab="yes" />
@@ -86,7 +83,7 @@
 
     <CustomAction
       Id="GenerateConfig"
-      BinaryKey="WixCA"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
       DllEntry="WixQuietExec"
       Execute="deferred"
       Return="check"
@@ -100,7 +97,7 @@
 
     <CustomAction
       Id="OpenBootstrap"
-      BinaryKey="WixCA"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
       DllEntry="WixQuietExec"
       Execute="immediate"
       Return="ignore" />
@@ -110,7 +107,7 @@
       <Custom Action="GenerateConfig" After="SetGenerateConfigCmd">NOT Installed</Custom>
     </InstallExecuteSequence>
 
-    <UIRef Id="WixUI_InstallDir" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
     <UI>
       <Dialog Id="BackendConfigDlg" Width="370" Height="270" Title="[ProductName] Setup">
@@ -146,5 +143,5 @@
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenBootstrap" Order="2">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
     </UI>
 
-  </Product>
+  </Package>
 </Wix>
