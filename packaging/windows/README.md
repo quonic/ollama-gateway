@@ -17,7 +17,7 @@ Current behavior:
 
 ## Local Build
 
-1. Install WiX Toolset v3.11 (`candle.exe`, `light.exe`).
+1. Install WiX Toolset v7.0.0+ (`wix` .NET tool).
 2. Build MSI from repo root:
 
 ```powershell

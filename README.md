@@ -107,7 +107,7 @@ Packaged install layout:
 
 This repo also includes a WiX Toolset-based MSI packaging path.
 
-1. Install WiX Toolset v3.11 (requires `candle.exe` and `light.exe`).
+1. Install WiX Toolset v7.0.0+ (.NET tool, `wix` command).
 
 2. Build MSI package:
 

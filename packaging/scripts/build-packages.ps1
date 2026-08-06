@@ -27,6 +27,8 @@ $wixPlatform = switch ($goArch) {
     default { throw "unsupported Go arch '$goArch' for WiX" }
 }
 
+$wixVersion = '7.0.0'
+
 function Convert-ToMsiVersion {
     param([string]$Version)
 
@@ -46,24 +48,26 @@ function Convert-ToMsiVersion {
     return "$major.$minor.$patch"
 }
 
-function Find-WixBinary {
-    param([string]$Name)
-
-    $fromPath = Get-Command $Name -ErrorAction SilentlyContinue
+function Find-WixCommand {
+    $fromPath = Get-Command wix -ErrorAction SilentlyContinue
     if ($fromPath) {
         return $fromPath.Source
     }
 
-    $defaultPath = "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin\$Name"
-    if (Test-Path $defaultPath) {
-        return $defaultPath
-    }
-
-    throw "$Name not found. Install WiX Toolset v3 or ensure binaries are in PATH."
+    throw "wix command not found. Install WiX Toolset .NET tool v7 and ensure it is in PATH."
 }
 
-$candle = Find-WixBinary -Name 'candle.exe'
-$light = Find-WixBinary -Name 'light.exe'
+$wix = Find-WixCommand
+
+& $wix extension add -g "WixToolset.UI.wixext/$wixVersion"
+if ($LASTEXITCODE -ne 0) {
+    throw "failed to add WixToolset.UI.wixext/$wixVersion"
+}
+
+& $wix extension add -g "WixToolset.Util.wixext/$wixVersion"
+if ($LASTEXITCODE -ne 0) {
+    throw "failed to add WixToolset.Util.wixext/$wixVersion"
+}
 
 New-Item -ItemType Directory -Path "bin\packages" -Force | Out-Null
 
@@ -82,17 +86,24 @@ if ($LASTEXITCODE -ne 0) {
 
 $msiVersion = Convert-ToMsiVersion -Version $env:VERSION
 $wxsPath = Join-Path $rootDir "packaging\windows\ollama-gateway.wxs"
-$objPath = Join-Path $rootDir "bin\packages\ollama-gateway.wixobj"
 $target = Join-Path $rootDir ("bin\packages\ollama-gateway_{0}_windows_{1}.msi" -f $env:VERSION, $goArch)
 
-& $candle -nologo -arch $wixPlatform -dProductVersion=$msiVersion -dPlatform=$wixPlatform -out $objPath $wxsPath
-if ($LASTEXITCODE -ne 0) {
-    throw "WiX compile failed"
-}
+$wixWorkDir = Join-Path $rootDir "bin\packages\wixsrc"
+New-Item -ItemType Directory -Path $wixWorkDir -Force | Out-Null
+$convertedWxs = Join-Path $wixWorkDir "ollama-gateway.wxs"
+Copy-Item $wxsPath $convertedWxs -Force
 
-& $light -nologo -ext WixUIExtension -ext WixUtilExtension -out $target $objPath
+Push-Location $wixWorkDir
+& $wix convert ".\ollama-gateway.wxs"
 if ($LASTEXITCODE -ne 0) {
-    throw "WiX link failed"
+    Pop-Location
+    throw "WiX source conversion failed"
+}
+Pop-Location
+
+& $wix build -nologo -arch $wixPlatform -d ProductVersion=$msiVersion -d Platform=$wixPlatform -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -o $target $convertedWxs
+if ($LASTEXITCODE -ne 0) {
+    throw "WiX build failed"
 }
 
 Write-Host "built $target"
