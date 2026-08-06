@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <?ifndef ProductVersion ?>
+    <?define ProductVersion="0.0.0" ?>
+  <?endif?>
+  <?ifndef Platform ?>
+    <?define Platform="x64" ?>
+  <?endif?>
+
+  <Product
+    Id="*"
+    Name="Ollama Gateway"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="Ollama Gateway Maintainers"
+    UpgradeCode="0F9CA5FD-1E24-4890-9C17-6D3022913E3D">
+
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Platform="$(var.Platform)" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Ollama Gateway is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="BACKEND_NAME" Value="local" />
+    <Property Id="BACKEND_URL" Value="http://127.0.0.1:11434" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open bootstrap admin token details" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Ollama Gateway" />
+      </Directory>
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="DATAROOT" Name="Ollama Gateway" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="cmpGatewayExe" Guid="50FCED39-95A4-4FEC-B1EE-E83050C23D26">
+        <File Id="GatewayExe" Source="..\..\bin\ollama-gateway.exe" KeyPath="yes" />
+        <ServiceInstall
+          Id="GatewayServiceInstall"
+          Type="ownProcess"
+          Name="OllamaGateway"
+          DisplayName="Ollama Gateway"
+          Description="API gateway for Ollama with auth, rate limiting, and admin dashboard"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem"
+          Arguments="--config &quot;[CommonAppDataFolder]Ollama Gateway\config.yaml&quot;" />
+        <ServiceControl
+          Id="GatewayServiceControl"
+          Name="OllamaGateway"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+
+      <Component Id="cmpBootstrapExe" Guid="BA6CF9D9-89AA-4902-BF1A-DBF868820685">
+        <File Id="BootstrapExe" Source="..\..\bin\installer-bootstrap.exe" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DATAROOT">
+      <Component Id="cmpDataDir" Guid="C5300FA3-B9EA-4C3D-ADE7-BEA57A409CB1">
+        <CreateFolder />
+        <RegistryValue Root="HKLM" Key="Software\OllamaGateway" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainFeature" Title="Ollama Gateway" Level="1">
+      <ComponentRef Id="cmpGatewayExe" />
+      <ComponentRef Id="cmpBootstrapExe" />
+      <ComponentRef Id="cmpDataDir" />
+    </Feature>
+
+    <CustomAction
+      Id="SetGenerateConfigCmd"
+      Property="GenerateConfig"
+      Value="&quot;[#BootstrapExe]&quot; --backend-name &quot;[BACKEND_NAME]&quot; --backend-url &quot;[BACKEND_URL]&quot; --config-path &quot;[CommonAppDataFolder]Ollama Gateway\config.yaml&quot; --bootstrap-path &quot;[CommonAppDataFolder]Ollama Gateway\bootstrap-admin.txt&quot; --database-path &quot;[CommonAppDataFolder]Ollama Gateway\gateway.db&quot;"
+      Execute="immediate" />
+
+    <CustomAction
+      Id="GenerateConfig"
+      BinaryKey="WixCA"
+      DllEntry="WixQuietExec"
+      Execute="deferred"
+      Return="check"
+      Impersonate="no" />
+
+    <CustomAction
+      Id="SetOpenBootstrapCmd"
+      Property="OpenBootstrap"
+      Value="&quot;[SystemFolder]notepad.exe&quot; &quot;[CommonAppDataFolder]Ollama Gateway\bootstrap-admin.txt&quot;"
+      Execute="immediate" />
+
+    <CustomAction
+      Id="OpenBootstrap"
+      BinaryKey="WixCA"
+      DllEntry="WixQuietExec"
+      Execute="immediate"
+      Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetGenerateConfigCmd" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="GenerateConfig" After="SetGenerateConfigCmd">NOT Installed</Custom>
+    </InstallExecuteSequence>
+
+    <UIRef Id="WixUI_InstallDir" />
+
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="SetOpenBootstrapCmd" Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenBootstrap" Order="2">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
+    </UI>
+
+  </Product>
+</Wix>

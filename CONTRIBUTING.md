@@ -169,6 +169,18 @@ go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 
 Package artifacts are written to `bin/packages/`.
 
+If your change affects Windows MSI packaging, build it locally with WiX Toolset v3.11:
+
+```powershell
+./packaging/scripts/build-packages.ps1
+```
+
+Windows packaging notes:
+
+- Requires `candle.exe` and `light.exe` from WiX Toolset
+- Produces MSI artifacts in `bin/packages/`
+- Uses installer helper `cmd/installer-bootstrap` to generate `config.yaml` and bootstrap token output during install
+
 ## Review Guidance
 
 Make reviewer work easier:
