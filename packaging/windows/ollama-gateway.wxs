@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+  xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <?ifndef ProductVersion ?>
     <?define ProductVersion="0.0.0" ?>
   <?endif?>
@@ -61,7 +62,10 @@
 
     <DirectoryRef Id="DATAROOT">
       <Component Id="cmpDataDir" Guid="C5300FA3-B9EA-4C3D-ADE7-BEA57A409CB1">
-        <CreateFolder />
+        <CreateFolder>
+          <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+          <util:PermissionEx User="Administrators" GenericAll="yes" />
+        </CreateFolder>
         <RegistryValue Root="HKLM" Key="Software\OllamaGateway" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </DirectoryRef>
