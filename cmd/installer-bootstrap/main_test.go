@@ -65,8 +65,14 @@ func TestRunCreatesConfigAndBootstrap(t *testing.T) {
 	if !strings.Contains(string(bootstrapData), "Admin token") {
 		t.Fatalf("bootstrap file missing admin token header")
 	}
-	if !strings.Contains(out.String(), "ADMIN_TOKEN=") {
-		t.Fatalf("stdout missing ADMIN_TOKEN export")
+	if strings.Contains(out.String(), "ADMIN_TOKEN=") {
+		t.Fatalf("stdout should not include ADMIN_TOKEN")
+	}
+	if !strings.Contains(out.String(), "CONFIG_PATH=") {
+		t.Fatalf("stdout missing CONFIG_PATH output")
+	}
+	if !strings.Contains(out.String(), "BOOTSTRAP_PATH=") {
+		t.Fatalf("stdout missing BOOTSTRAP_PATH output")
 	}
 }
 

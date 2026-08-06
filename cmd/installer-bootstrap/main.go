@@ -151,7 +151,6 @@ func run(opts options, out outputWriter) error {
 		return fmt.Errorf("write bootstrap details: %w", err)
 	}
 
-	_, _ = out.WriteString("ADMIN_TOKEN=" + token + "\n")
 	_, _ = out.WriteString("CONFIG_PATH=" + opts.ConfigPath + "\n")
 	_, _ = out.WriteString("BOOTSTRAP_PATH=" + opts.BootstrapPath + "\n")
 	return nil
