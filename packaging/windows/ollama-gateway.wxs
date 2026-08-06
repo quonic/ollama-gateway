@@ -34,7 +34,7 @@
 
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="cmpGatewayExe" Guid="50FCED39-95A4-4FEC-B1EE-E83050C23D26">
-        <File Id="GatewayExe" Source="..\..\bin\ollama-gateway.exe" KeyPath="yes" />
+        <File Id="GatewayExe" Source="bin\ollama-gateway.exe" KeyPath="yes" />
         <ServiceInstall
           Id="GatewayServiceInstall"
           Type="ownProcess"
@@ -55,7 +55,7 @@
       </Component>
 
       <Component Id="cmpBootstrapExe" Guid="BA6CF9D9-89AA-4902-BF1A-DBF868820685">
-        <File Id="BootstrapExe" Source="..\..\bin\installer-bootstrap.exe" KeyPath="yes" />
+        <File Id="BootstrapExe" Source="bin\installer-bootstrap.exe" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
