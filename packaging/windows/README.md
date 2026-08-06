@@ -12,6 +12,8 @@ Current behavior:
 - Uses backend defaults unless MSI properties are overridden:
   - `BACKEND_NAME=local`
   - `BACKEND_URL=http://127.0.0.1:11434`
+- Shows installer dialog to collect backend name and backend URL before install proceeds
+- Validates backend input is non-empty and URL contains `http://` or `https://`
 
 ## Local Build
 
@@ -36,5 +38,4 @@ msiexec /i .\ollama-gateway_1.2.3_windows_amd64.msi BACKEND_NAME=prod BACKEND_UR
 
 ## Notes
 
-- This is the first implementation slice. UI prompts for backend name and URL are planned next.
 - The generated bootstrap file contains the one-time admin token. Store it securely.

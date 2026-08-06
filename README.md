@@ -127,6 +127,8 @@ Installer behavior (current implementation):
 - Generates bootstrap file at `C:\ProgramData\Ollama Gateway\bootstrap-admin.txt`
 - Generates database path in config as `C:\ProgramData\Ollama Gateway\gateway.db`
 - Auto-generates an admin token and writes it to the bootstrap file
+- Prompts for backend name and backend URL in the MSI wizard
+- Validates backend name/url before allowing install to continue
 
 You can override initial backend values at install time:
 
