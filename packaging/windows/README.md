@@ -38,4 +38,4 @@ msiexec /i .\ollama-gateway_1.2.3_windows_amd64.msi BACKEND_NAME=prod BACKEND_UR
 
 ## Notes
 
-- The generated bootstrap file contains the one-time admin token. Store it securely.
+- The generated bootstrap file contains the bootstrap admin token. Store it securely and rotate it after initial setup (e.g., by setting a new admin token hash in config.yaml).
