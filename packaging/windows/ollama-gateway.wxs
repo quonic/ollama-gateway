@@ -23,7 +23,6 @@
 
     <Property Id="BACKEND_NAME" Value="local" />
     <Property Id="BACKEND_URL" Value="http://127.0.0.1:11434" />
-    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open bootstrap admin token details" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
