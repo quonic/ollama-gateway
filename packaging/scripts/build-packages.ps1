@@ -59,6 +59,11 @@ function Find-WixCommand {
 
 $wix = Find-WixCommand
 
+& $wix eula accept wix7
+if ($LASTEXITCODE -ne 0) {
+    throw "failed to accept WiX v7 EULA (wix7)"
+}
+
 & $wix extension add -g "WixToolset.UI.wixext/$wixVersion"
 if ($LASTEXITCODE -ne 0) {
     throw "failed to add WixToolset.UI.wixext/$wixVersion"
