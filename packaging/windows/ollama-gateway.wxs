@@ -26,14 +26,12 @@
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open bootstrap admin token details" />
 
-    <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLFOLDER" Name="Ollama Gateway" />
-      </Directory>
-      <Directory Id="CommonAppDataFolder">
-        <Directory Id="DATAROOT" Name="Ollama Gateway" />
-      </Directory>
-    </Directory>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Ollama Gateway" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAROOT" Name="Ollama Gateway" />
+    </StandardDirectory>
 
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="cmpGatewayExe" Guid="50FCED39-95A4-4FEC-B1EE-E83050C23D26">
@@ -103,8 +101,8 @@
       Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="SetGenerateConfigCmd" After="InstallFiles">NOT Installed</Custom>
-      <Custom Action="GenerateConfig" After="SetGenerateConfigCmd">NOT Installed</Custom>
+      <Custom Action="SetGenerateConfigCmd" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="GenerateConfig" After="SetGenerateConfigCmd" Condition="NOT Installed" />
     </InstallExecuteSequence>
 
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
@@ -120,27 +118,27 @@
         <Control Id="Hint" Type="Text" X="20" Y="157" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Text="Example: http://127.0.0.1:11434 or https://ollama.example.com" />
 
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc/WixUIBack)">
-          <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+          <Publish Event="NewDialog" Value="InstallDirDlg" Condition="1" />
         </Control>
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc/WixUINext)">
-          <Publish Property="ErrorText" Value="Backend name is required." Order="1">BACKEND_NAME = ""</Publish>
-          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="2">BACKEND_NAME = ""</Publish>
-          <Publish Property="ErrorText" Value="Backend URL is required." Order="3">BACKEND_NAME &lt;&gt; "" AND BACKEND_URL = ""</Publish>
-          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="4">BACKEND_NAME &lt;&gt; "" AND BACKEND_URL = ""</Publish>
-          <Publish Property="ErrorText" Value="Backend URL must include http:// or https:// scheme." Order="5">BACKEND_NAME &lt;&gt; "" AND BACKEND_URL &lt;&gt; "" AND (NOT (BACKEND_URL &gt;&lt; "http://" OR BACKEND_URL &gt;&lt; "https://"))</Publish>
-          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="6">BACKEND_NAME &lt;&gt; "" AND BACKEND_URL &lt;&gt; "" AND (NOT (BACKEND_URL &gt;&lt; "http://" OR BACKEND_URL &gt;&lt; "https://"))</Publish>
-          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="7">BACKEND_NAME &lt;&gt; "" AND BACKEND_URL &lt;&gt; "" AND (BACKEND_URL &gt;&lt; "http://" OR BACKEND_URL &gt;&lt; "https://")</Publish>
+          <Publish Property="ErrorText" Value="Backend name is required." Order="1" Condition="BACKEND_NAME = &quot;&quot;" />
+          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="2" Condition="BACKEND_NAME = &quot;&quot;" />
+          <Publish Property="ErrorText" Value="Backend URL is required." Order="3" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL = &quot;&quot;" />
+          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="4" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL = &quot;&quot;" />
+          <Publish Property="ErrorText" Value="Backend URL must include http:// or https:// scheme." Order="5" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL &lt;&gt; &quot;&quot; AND (NOT (BACKEND_URL &gt;&lt; &quot;http://&quot; OR BACKEND_URL &gt;&lt; &quot;https://&quot;))" />
+          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="6" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL &lt;&gt; &quot;&quot; AND (NOT (BACKEND_URL &gt;&lt; &quot;http://&quot; OR BACKEND_URL &gt;&lt; &quot;https://&quot;))" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="7" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL &lt;&gt; &quot;&quot; AND (BACKEND_URL &gt;&lt; &quot;http://&quot; OR BACKEND_URL &gt;&lt; &quot;https://&quot;)" />
         </Control>
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc/WixUICancel)">
-          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+          <Publish Event="SpawnDialog" Value="CancelDlg" Condition="1" />
         </Control>
       </Dialog>
 
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="BackendConfigDlg" Order="5">1</Publish>
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="BackendConfigDlg" Order="5">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="BackendConfigDlg" Order="5" Condition="1" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="BackendConfigDlg" Order="5" Condition="1" />
 
-      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="SetOpenBootstrapCmd" Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
-      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenBootstrap" Order="2">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="SetOpenBootstrapCmd" Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenBootstrap" Order="2" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
     </UI>
 
   </Package>
