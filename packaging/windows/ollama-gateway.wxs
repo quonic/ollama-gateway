@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+  xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <?ifndef ProductVersion ?>
+    <?define ProductVersion="0.0.0" ?>
+  <?endif?>
+  <?ifndef Platform ?>
+    <?define Platform="x64" ?>
+  <?endif?>
+
+  <Package
+    Name="Ollama Gateway"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="Ollama Gateway Maintainers"
+    UpgradeCode="0F9CA5FD-1E24-4890-9C17-6D3022913E3D"
+    InstallerVersion="500"
+    Compressed="yes"
+    Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Ollama Gateway is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="BACKEND_NAME" Value="local" />
+    <Property Id="BACKEND_URL" Value="http://127.0.0.1:11434" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open bootstrap admin token details" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Ollama Gateway" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAROOT" Name="Ollama Gateway" />
+    </StandardDirectory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="cmpGatewayExe" Guid="50FCED39-95A4-4FEC-B1EE-E83050C23D26">
+        <File Id="GatewayExe" Source="bin\ollama-gateway.exe" KeyPath="yes" />
+        <ServiceInstall
+          Id="GatewayServiceInstall"
+          Type="ownProcess"
+          Name="OllamaGateway"
+          DisplayName="Ollama Gateway"
+          Description="API gateway for Ollama with auth, rate limiting, and admin dashboard"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalSystem"
+          Arguments="--config &quot;[CommonAppDataFolder]Ollama Gateway\config.yaml&quot;" />
+        <ServiceControl
+          Id="GatewayServiceControl"
+          Name="OllamaGateway"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+
+      <Component Id="cmpBootstrapExe" Guid="BA6CF9D9-89AA-4902-BF1A-DBF868820685">
+        <File Id="BootstrapExe" Source="bin\installer-bootstrap.exe" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DATAROOT">
+      <Component Id="cmpDataDir" Guid="C5300FA3-B9EA-4C3D-ADE7-BEA57A409CB1">
+        <CreateFolder>
+          <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+          <util:PermissionEx User="Administrators" GenericAll="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="Software\OllamaGateway" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainFeature" Title="Ollama Gateway" Level="1">
+      <ComponentRef Id="cmpGatewayExe" />
+      <ComponentRef Id="cmpBootstrapExe" />
+      <ComponentRef Id="cmpDataDir" />
+    </Feature>
+
+    <CustomAction
+      Id="SetGenerateConfigCmd"
+      Property="GenerateConfig"
+      Value="&quot;[#BootstrapExe]&quot; --backend-name &quot;[BACKEND_NAME]&quot; --backend-url &quot;[BACKEND_URL]&quot; --config-path &quot;[CommonAppDataFolder]Ollama Gateway\config.yaml&quot; --bootstrap-path &quot;[CommonAppDataFolder]Ollama Gateway\bootstrap-admin.txt&quot; --database-path &quot;[CommonAppDataFolder]Ollama Gateway\gateway.db&quot;"
+      Execute="immediate" />
+
+    <CustomAction
+      Id="GenerateConfig"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+      DllEntry="WixQuietExec"
+      Execute="deferred"
+      Return="check"
+      Impersonate="no" />
+
+    <CustomAction
+      Id="SetOpenBootstrapCmd"
+      Property="OpenBootstrap"
+      Value="&quot;[SystemFolder]notepad.exe&quot; &quot;[CommonAppDataFolder]Ollama Gateway\bootstrap-admin.txt&quot;"
+      Execute="immediate" />
+
+    <CustomAction
+      Id="OpenBootstrap"
+      BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+      DllEntry="WixQuietExec"
+      Execute="immediate"
+      Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetGenerateConfigCmd" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="GenerateConfig" After="SetGenerateConfigCmd" Condition="NOT Installed" />
+    </InstallExecuteSequence>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <UI>
+      <Dialog Id="BackendConfigDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="Initial backend configuration" />
+        <Control Id="Description" Type="Text" X="20" Y="23" Width="330" Height="28" Transparent="yes" NoPrefix="yes" Text="Enter the first backend for Ollama Gateway. These values will be written into generated config.yaml." />
+        <Control Id="NameLabel" Type="Text" X="20" Y="68" Width="110" Height="15" Text="Backend name:" />
+        <Control Id="NameEdit" Type="Edit" X="20" Y="84" Width="330" Height="18" Property="BACKEND_NAME" Text="{80}" />
+        <Control Id="UrlLabel" Type="Text" X="20" Y="112" Width="210" Height="15" Text="Backend URL (http:// or https://):" />
+        <Control Id="UrlEdit" Type="Edit" X="20" Y="128" Width="330" Height="18" Property="BACKEND_URL" Text="{255}" />
+        <Control Id="Hint" Type="Text" X="20" Y="157" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Text="Example: http://127.0.0.1:11434 or https://ollama.example.com" />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc/WixUIBack)">
+          <Publish Event="NewDialog" Value="InstallDirDlg" Condition="1" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc/WixUINext)">
+          <Publish Property="ErrorText" Value="Backend name is required." Order="1" Condition="BACKEND_NAME = &quot;&quot;" />
+          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="2" Condition="BACKEND_NAME = &quot;&quot;" />
+          <Publish Property="ErrorText" Value="Backend URL is required." Order="3" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL = &quot;&quot;" />
+          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="4" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL = &quot;&quot;" />
+          <Publish Property="ErrorText" Value="Backend URL must include http:// or https:// scheme." Order="5" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL &lt;&gt; &quot;&quot; AND (NOT (BACKEND_URL &gt;&lt; &quot;http://&quot; OR BACKEND_URL &gt;&lt; &quot;https://&quot;))" />
+          <Publish Event="SpawnDialog" Value="ErrorDlg" Order="6" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL &lt;&gt; &quot;&quot; AND (NOT (BACKEND_URL &gt;&lt; &quot;http://&quot; OR BACKEND_URL &gt;&lt; &quot;https://&quot;))" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="7" Condition="BACKEND_NAME &lt;&gt; &quot;&quot; AND BACKEND_URL &lt;&gt; &quot;&quot; AND (BACKEND_URL &gt;&lt; &quot;http://&quot; OR BACKEND_URL &gt;&lt; &quot;https://&quot;)" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc/WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" Condition="1" />
+        </Control>
+      </Dialog>
+
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="BackendConfigDlg" Order="5" Condition="1" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="BackendConfigDlg" Order="5" Condition="1" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="SetOpenBootstrapCmd" Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenBootstrap" Order="2" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+
+  </Package>
+</Wix>

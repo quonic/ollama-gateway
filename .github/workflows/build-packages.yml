@@ -13,7 +13,7 @@ on:
 
 jobs:
   build-packages:
-    name: Build deb and rpm (${{ matrix.arch }})
+    name: Build packages (${{ matrix.os }} ${{ matrix.arch }})
     if: >
       github.event_name == 'workflow_dispatch' ||
       (
@@ -56,10 +56,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
+          - os: linux
+            arch: amd64
             runner: ubuntu-latest
-          - arch: arm64
+          - os: linux
+            arch: arm64
             runner: ubuntu-24.04-arm
+          - os: windows
+            arch: amd64
+            runner: windows-latest
 
     steps:
       - name: Checkout
@@ -74,19 +79,35 @@ jobs:
           cache: true
 
       - name: Install nfpm
+        if: matrix.os == 'linux'
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Build packages
+      - name: Build Linux packages
+        if: matrix.os == 'linux'
         env:
           ARCH: ${{ matrix.arch }}
         run: ./scripts/build-packages.sh
 
+      - name: Install WiX Toolset v7
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build Windows MSI
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./packaging/scripts/build-packages.ps1
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ollama-gateway-packages-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          name: ollama-gateway-packages-${{ matrix.os }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
           path: bin/packages/*
           if-no-files-found: error
           retention-days: 14

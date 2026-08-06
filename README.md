@@ -103,6 +103,39 @@ Packaged install layout:
 - Default DB path when unset: `/var/lib/ollama-gateway/gateway.db`
 - Systemd unit: `/usr/lib/systemd/system/ollama-gateway.service`
 
+## Windows MSI (WiX)
+
+This repo also includes a WiX Toolset-based MSI packaging path.
+
+1. Install WiX Toolset v7.0.0+ (.NET tool, `wix` command).
+
+2. Build MSI package:
+
+   ```powershell
+   ./packaging/scripts/build-packages.ps1
+   ```
+
+Artifacts are written to `bin/packages/`:
+
+- `ollama-gateway_<version>_windows_<arch>.msi`
+
+Installer behavior (current implementation):
+
+- Installs binaries to `C:\Program Files\Ollama Gateway`
+- Installs and starts Windows service `OllamaGateway`
+- Generates runtime config at `C:\ProgramData\Ollama Gateway\config.yaml`
+- Generates bootstrap file at `C:\ProgramData\Ollama Gateway\bootstrap-admin.txt`
+- Generates database path in config as `C:\ProgramData\Ollama Gateway\gateway.db`
+- Auto-generates an admin token and writes it to the bootstrap file
+- Prompts for backend name and backend URL in the MSI wizard
+- Validates backend name/url before allowing install to continue
+
+You can override initial backend values at install time:
+
+```powershell
+msiexec /i .\ollama-gateway_1.2.3_windows_amd64.msi BACKEND_NAME=prod BACKEND_URL=https://ollama.example.com
+```
+
 ## Configuration
 
 See [`configs/config.example.yaml`](configs/config.example.yaml) for a full example with comments.
