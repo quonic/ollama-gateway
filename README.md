@@ -45,25 +45,15 @@ Notes:
 
 ## Screenshots
 
-### Overview
+![Overview](screenshots/overview.png)
 
-<img width="2557" height="1307" alt="image" src="https://github.com/user-attachments/assets/24fa9a8f-a058-43ed-a6d2-5ac3b37fb047" />
+![Models](screenshots/models.png)
 
-### Models
+![Backends](screenshots/backends.png)
 
-<img width="2556" height="1307" alt="image" src="https://github.com/user-attachments/assets/44ba14a4-0aed-4d36-85d2-63f6ae895698" />
+![Users](screenshots/users.png)
 
-### Backends
-
-<img width="2556" height="1307" alt="image" src="https://github.com/user-attachments/assets/bdd41273-0923-4298-8e42-68237d7ac65e" />
-
-### Users
-
-<img width="2556" height="1307" alt="image" src="https://github.com/user-attachments/assets/b00e9c90-1b3b-4611-9a1f-b59f5a543bb8" />
-
-### Logs
-
-<img width="2556" height="1071" alt="image" src="https://github.com/user-attachments/assets/f0063cc9-9531-4fb9-8c9b-d37d66ec292e" />
+![Logs](screenshots/logs.png)
 
 ## CLI
 

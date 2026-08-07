@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ollama-gateway/internal/auth"
@@ -40,6 +42,10 @@ type Handler struct {
 	backendStore *backends.Store
 
 	reloadStatusProvider func() config.ReloadStatus
+	backendModelStateMu  sync.RWMutex
+	backendModelState    *backendModelState
+	pullJobMu            sync.Mutex
+	pullJob              *pullJobState
 
 	refreshResolverCatalog func(map[string]config.ModelEntry)
 	refreshProxyPricing    func(*usage.PricingConfig)
@@ -56,6 +62,51 @@ const (
 
 type state struct {
 	disabledBackends map[string]bool
+}
+
+type backendModelState struct {
+	Action        string
+	BackendName   string
+	ModelName     string
+	Available     []backends.ModelInfo
+	InMemory      []backends.ModelInfo
+	Details       map[string]any
+	ParsedDetails *backends.ModelShowMetadata
+	FormError     string
+	FormSuccess   string
+}
+
+type pullJobState struct {
+	ID           string
+	BackendName  string
+	ModelName    string
+	Status       string
+	Digest       string
+	Total        int64
+	Completed    int64
+	StartedAt    time.Time
+	CompletedAt  time.Time
+	ErrorMessage string
+	Active       bool
+}
+
+type pullJobView struct {
+	ID              string
+	BackendName     string
+	ModelName       string
+	Status          string
+	Digest          string
+	Total           int64
+	Completed       int64
+	Percent         int
+	StartedAt       string
+	CompletedAt     string
+	ErrorMessage    string
+	IsActive        bool
+	IsComplete      bool
+	IsError         bool
+	IsIndeterminate bool
+	ShouldPoll      bool
 }
 
 type ThemeOption struct {
@@ -176,6 +227,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleModelAction(w, r)
 		return
 	}
+	if r.Method == http.MethodPost && path == "models/backend-fragment" {
+		h.renderModelsBackendFragment(w, r)
+		return
+	}
+	if r.Method == http.MethodPost && path == "models/pull" {
+		h.handlePullModelStart(w, r)
+		return
+	}
 	if r.Method == http.MethodPost && path == "backends" {
 		h.handleBackendAction(w, r)
 		return
@@ -197,6 +256,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.renderOverviewPartial(w, r)
 	case "models":
 		h.renderModels(w, r)
+	case "models/backend-fragment":
+		h.renderModelsBackendFragment(w, r)
+	case "pull-status":
+		h.renderPullStatus(w, r)
 	case "backends":
 		h.renderBackends(w, r)
 	case "users":
@@ -377,7 +440,91 @@ func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
 	h.renderModelsPage(w, r, "", "")
 }
 
+func (h *Handler) getBackendModelState() *backendModelState {
+	h.backendModelStateMu.RLock()
+	state := h.backendModelState
+	h.backendModelStateMu.RUnlock()
+	return state
+}
+
+func (h *Handler) setBackendModelState(state *backendModelState) {
+	h.backendModelStateMu.Lock()
+	h.backendModelState = state
+	h.backendModelStateMu.Unlock()
+}
+
+func (h *Handler) renderModelsBackendFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.isAuthenticated(r) {
+		h.httpError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	values, err := backendModelRequestValues(r)
+	if err != nil {
+		h.httpError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+
+	backendAction := lastValue(values, "backend_model_action")
+	backendName := strings.TrimSpace(values.Get("backend_model_backend"))
+	modelName := strings.TrimSpace(values.Get("backend_model_name"))
+	if backendAction == "" {
+		backendAction = "refresh"
+	}
+
+	var state *backendModelState
+	if backendName == "" {
+		state = h.defaultBackendModelState()
+	} else {
+		refreshed, err := h.executeBackendModelAction(r.Context(), backendAction, backendName, modelName)
+		if err != nil {
+			state = &backendModelState{
+				Action:      backendAction,
+				BackendName: backendName,
+				ModelName:   modelName,
+				FormError:   fmt.Sprintf("Backend operation failed: %v", err),
+			}
+		} else {
+			state = refreshed
+		}
+	}
+	if state != nil {
+		h.setBackendModelState(state)
+	}
+
+	data := map[string]any{
+		"Backends":          h.cfg.Backends,
+		"BackendModelState": state,
+	}
+	data = h.withThemeData(r, data)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "content-model-backend-fragment", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func backendModelRequestValues(r *http.Request) (url.Values, error) {
+	if r == nil {
+		return url.Values{}, nil
+	}
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			return nil, err
+		}
+		return r.Form, nil
+	}
+	return r.URL.Query(), nil
+}
+
 func (h *Handler) renderModelsPage(w http.ResponseWriter, r *http.Request, formError, formSuccess string) {
+	backendState := h.getBackendModelState()
+	if backendState == nil {
+		backendState = h.defaultBackendModelState()
+		if backendState != nil {
+			h.setBackendModelState(backendState)
+		}
+	}
+
 	models := h.currentModelCatalog()
 	users := h.usersSnapshot()
 	allUsers := make([]string, 0, len(users))
@@ -433,7 +580,7 @@ func (h *Handler) renderModelsPage(w http.ResponseWriter, r *http.Request, formE
 
 	data := map[string]any{
 		"Title":             "Models",
-		"Subtitle":          "Create and edit model routing, pricing, and user access policies.",
+		"Subtitle":          "Create and edit model routing, pricing, user access policies, and backend model operations.",
 		"Active":            "models",
 		"ContentBlock":      "content-models",
 		"Models":            viewModels,
@@ -444,12 +591,126 @@ func (h *Handler) renderModelsPage(w http.ResponseWriter, r *http.Request, formE
 		"DefaultOutputCost": h.cfg.Pricing.DefaultOutputPer1M,
 		"FormError":         formError,
 		"FormSuccess":       formSuccess,
+		"BackendModelState": backendState,
 	}
 	data = h.withThemeData(r, data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "models.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (h *Handler) defaultBackendModelState() *backendModelState {
+	if h.manager == nil || len(h.cfg.Backends) == 0 {
+		return nil
+	}
+
+	backendName := strings.TrimSpace(h.cfg.Backends[0].Name)
+	if backendName == "" {
+		return nil
+	}
+	_, ok := h.manager.GetByName(backendName)
+	if !ok {
+		return nil
+	}
+
+	state, err := h.refreshBackendModelState(context.Background(), backendName, "")
+	if err != nil {
+		return nil
+	}
+	return state
+}
+
+func (h *Handler) refreshBackendModelState(ctx context.Context, backendName, modelName string) (*backendModelState, error) {
+	if h.manager == nil {
+		return nil, fmt.Errorf("backend manager unavailable")
+	}
+	backend, ok := h.manager.GetByName(backendName)
+	if !ok {
+		return nil, fmt.Errorf("backend %q not found", backendName)
+	}
+
+	state := &backendModelState{
+		Action:      "refresh",
+		BackendName: backendName,
+		ModelName:   modelName,
+	}
+	available, err := backend.ListModels(ctx)
+	if err != nil {
+		return state, err
+	}
+	state.Available = available
+	inMemory, err := backend.ListInMemoryModels(ctx)
+	if err != nil {
+		state.FormError = fmt.Sprintf("Loaded models on backend %q, but failed to read in-memory models: %v", backendName, err)
+		state.FormSuccess = fmt.Sprintf("Refreshed backend %q model view.", backendName)
+		return state, nil
+	}
+	state.InMemory = inMemory
+	state.FormSuccess = fmt.Sprintf("Refreshed backend %q model view.", backendName)
+	return state, nil
+}
+
+func (h *Handler) executeBackendModelAction(ctx context.Context, backendAction, backendName, modelName string) (*backendModelState, error) {
+	state, err := h.refreshBackendModelState(ctx, backendName, modelName)
+	if err != nil {
+		state.Action = backendAction
+		return state, err
+	}
+
+	state.Action = backendAction
+	if backendAction == "refresh" {
+		return state, nil
+	}
+	if strings.TrimSpace(modelName) == "" {
+		state.FormError = "Model name is required for that operation."
+		return state, fmt.Errorf("model name is required for that operation")
+	}
+
+	backend, ok := h.manager.GetByName(backendName)
+	if !ok {
+		state.FormError = fmt.Sprintf("Backend %q not found.", backendName)
+		return state, fmt.Errorf("backend %q not found", backendName)
+	}
+
+	switch backendAction {
+	case "inspect":
+		state.Details, err = backend.ShowModel(ctx, modelName)
+		if err != nil {
+			return state, err
+		}
+		state.ParsedDetails = backends.ParseModelShowMetadata(state.Details)
+		state.FormSuccess = fmt.Sprintf("Inspecting model %q on backend %q.", modelName, backendName)
+		return state, nil
+	case "delete":
+		err = backend.DeleteModel(ctx, modelName)
+		if err != nil {
+			return state, err
+		}
+		state.FormSuccess = fmt.Sprintf("Model %q deletion requested on backend %q.", modelName, backendName)
+		return state, nil
+	case "eject":
+		err = backend.EjectModel(ctx, modelName)
+		if err != nil {
+			return state, err
+		}
+		state.FormSuccess = fmt.Sprintf("Model %q eject requested on backend %q.", modelName, backendName)
+		return state, nil
+	default:
+		state.FormError = fmt.Sprintf("Unknown backend action %q.", backendAction)
+		return state, fmt.Errorf("unknown backend action %q", backendAction)
+	}
+}
+
+func lastValue(values url.Values, key string) string {
+	if values == nil {
+		return ""
+	}
+	items, ok := values[key]
+	if !ok || len(items) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(items[len(items)-1])
 }
 
 func (h *Handler) renderBackends(w http.ResponseWriter, r *http.Request) {
@@ -567,13 +828,202 @@ func (h *Handler) logsViewData(r *http.Request) map[string]any {
 	return h.withThemeData(r, data)
 }
 
+func (h *Handler) renderPullStatus(w http.ResponseWriter, r *http.Request) {
+	if !h.isAuthenticated(r) {
+		h.httpError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	data := h.withThemeData(r, map[string]any{})
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "pull-status-fragment", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func (h *Handler) withThemeData(r *http.Request, data map[string]any) map[string]any {
 	themes := h.availableThemes()
 	selectedTheme := selectedThemeFromRequest(r, themes)
 	data["Themes"] = themes
 	data["SelectedTheme"] = selectedTheme
 	data["ThemeStylesheetHref"] = themeStylesheetHref(selectedTheme)
+	data["PullJob"] = h.currentPullJobView()
+	data["PullStatusPath"] = "/admin/pull-status"
 	return data
+}
+
+func (h *Handler) currentPullJobView() *pullJobView {
+	h.pullJobMu.Lock()
+	defer h.pullJobMu.Unlock()
+
+	if h.pullJob == nil {
+		return nil
+	}
+
+	if !h.pullJob.Active && !h.pullJob.CompletedAt.IsZero() && h.now().After(h.pullJob.CompletedAt.Add(10*time.Second)) {
+		h.pullJob = nil
+		return nil
+	}
+
+	view := &pullJobView{
+		ID:           h.pullJob.ID,
+		BackendName:  h.pullJob.BackendName,
+		ModelName:    h.pullJob.ModelName,
+		Status:       h.pullJob.Status,
+		Digest:       h.pullJob.Digest,
+		Total:        h.pullJob.Total,
+		Completed:    h.pullJob.Completed,
+		StartedAt:    h.pullJob.StartedAt.UTC().Format(time.RFC3339),
+		ErrorMessage: h.pullJob.ErrorMessage,
+		IsActive:     h.pullJob.Active,
+	}
+	if !h.pullJob.CompletedAt.IsZero() {
+		view.CompletedAt = h.pullJob.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	if view.Total > 0 {
+		view.Percent = int((view.Completed * 100) / view.Total)
+		if view.Percent > 100 {
+			view.Percent = 100
+		}
+	}
+	view.IsIndeterminate = view.Total <= 0
+	view.IsError = strings.TrimSpace(view.ErrorMessage) != ""
+	view.IsComplete = !view.IsActive && !view.IsError
+	view.ShouldPoll = view.IsActive || (!h.pullJob.CompletedAt.IsZero() && h.now().Before(h.pullJob.CompletedAt.Add(10*time.Second)))
+	if strings.TrimSpace(view.Status) == "" {
+		if view.IsError {
+			view.Status = "Download failed"
+		} else if view.IsComplete {
+			view.Status = "Download complete"
+		} else {
+			view.Status = "Starting download"
+		}
+	}
+	return view
+}
+
+func (h *Handler) handlePullModelStart(w http.ResponseWriter, r *http.Request) {
+	if !h.isAuthenticated(r) {
+		h.renderLogin(w, r, true)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.httpError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+
+	backendName := strings.TrimSpace(r.FormValue("backend_model_backend"))
+	modelName := strings.TrimSpace(r.FormValue("pull_model_name"))
+	if backendName == "" {
+		h.renderModelsPage(w, r, "Backend is required for model download.", "")
+		return
+	}
+	if modelName == "" {
+		h.renderModelsPage(w, r, "Model name is required for download.", "")
+		return
+	}
+
+	backend, ok := h.manager.GetByName(backendName)
+	if !ok {
+		h.renderModelsPage(w, r, fmt.Sprintf("Backend %q not found.", backendName), "")
+		return
+	}
+
+	if _, err := h.startPullJob(backend, backendName, modelName); err != nil {
+		h.renderModelsPage(w, r, err.Error(), "")
+		return
+	}
+
+	http.Redirect(w, r, "/admin/models", http.StatusSeeOther)
+}
+
+func (h *Handler) startPullJob(backend *backends.Backend, backendName, modelName string) (*pullJobView, error) {
+	h.pullJobMu.Lock()
+	if h.pullJob != nil && h.pullJob.Active {
+		activeBackend := h.pullJob.BackendName
+		activeModel := h.pullJob.ModelName
+		h.pullJobMu.Unlock()
+		return nil, fmt.Errorf("a model download is already active for %q on backend %q", activeModel, activeBackend)
+	}
+
+	jobID := h.newPullJobID()
+	h.pullJob = &pullJobState{
+		ID:          jobID,
+		BackendName: backendName,
+		ModelName:   modelName,
+		Status:      "Starting download",
+		StartedAt:   h.now(),
+		Active:      true,
+	}
+	h.pullJobMu.Unlock()
+
+	go func() {
+		err := backend.PullModelStream(context.Background(), modelName, func(progress backends.PullProgress) {
+			h.recordPullJobProgress(jobID, progress)
+		})
+		h.finishPullJob(jobID, err)
+	}()
+
+	return h.currentPullJobView(), nil
+}
+
+func (h *Handler) recordPullJobProgress(jobID string, progress backends.PullProgress) {
+	h.pullJobMu.Lock()
+	defer h.pullJobMu.Unlock()
+
+	if h.pullJob == nil || h.pullJob.ID != jobID {
+		return
+	}
+	if strings.TrimSpace(progress.Status) != "" {
+		h.pullJob.Status = strings.TrimSpace(progress.Status)
+	}
+	if strings.TrimSpace(progress.Digest) != "" {
+		h.pullJob.Digest = strings.TrimSpace(progress.Digest)
+	}
+	if progress.Total > 0 {
+		h.pullJob.Total = progress.Total
+	}
+	if progress.Completed > 0 {
+		h.pullJob.Completed = progress.Completed
+	}
+	if strings.TrimSpace(progress.Error) != "" {
+		h.pullJob.ErrorMessage = strings.TrimSpace(progress.Error)
+	}
+	if strings.EqualFold(strings.TrimSpace(progress.Status), "success") {
+		h.pullJob.Status = "Download complete"
+	}
+}
+
+func (h *Handler) finishPullJob(jobID string, err error) {
+	h.pullJobMu.Lock()
+	defer h.pullJobMu.Unlock()
+
+	if h.pullJob == nil || h.pullJob.ID != jobID {
+		return
+	}
+	h.pullJob.Active = false
+	h.pullJob.CompletedAt = h.now()
+	if err != nil {
+		h.pullJob.ErrorMessage = err.Error()
+		h.pullJob.Status = "Download failed"
+		return
+	}
+	if h.pullJob.Completed > 0 && h.pullJob.Total > 0 && h.pullJob.Completed < h.pullJob.Total {
+		h.pullJob.Completed = h.pullJob.Total
+	}
+	if strings.TrimSpace(h.pullJob.Status) == "" || strings.EqualFold(strings.TrimSpace(h.pullJob.Status), "success") {
+		h.pullJob.Status = "Download complete"
+	}
+	if h.pullJob.Total > 0 && h.pullJob.Completed == 0 {
+		h.pullJob.Completed = h.pullJob.Total
+	}
+}
+
+func (h *Handler) newPullJobID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err == nil {
+		return hex.EncodeToString(buf)
+	}
+	return fmt.Sprintf("pull-%d", h.now().UnixNano())
 }
 
 func (h *Handler) availableThemes() []ThemeOption {
@@ -1237,6 +1687,31 @@ func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	action := strings.TrimSpace(r.FormValue("action"))
+	if backendAction := lastValue(r.Form, "backend_model_action"); backendAction != "" {
+		backendName := strings.TrimSpace(r.FormValue("backend_model_backend"))
+		modelName := strings.TrimSpace(r.FormValue("backend_model_name"))
+		if backendName == "" {
+			h.setBackendModelState(&backendModelState{FormError: "Backend is required for backend model operations."})
+			h.renderModelsPage(w, r, "Backend is required for backend model operations.", "")
+			return
+		}
+		if modelName == "" && backendAction != "refresh" {
+			h.setBackendModelState(&backendModelState{FormError: "Model name is required for that operation."})
+			h.renderModelsPage(w, r, "Model name is required for that operation.", "")
+			return
+		}
+		state, err := h.executeBackendModelAction(r.Context(), backendAction, backendName, modelName)
+		if err != nil {
+			state.FormError = fmt.Sprintf("Backend operation failed: %v", err)
+			h.setBackendModelState(state)
+			h.renderModelsPage(w, r, state.FormError, "")
+			return
+		}
+		h.setBackendModelState(state)
+		h.renderModelsPage(w, r, "", state.FormSuccess)
+		return
+	}
+
 	modelName := strings.TrimSpace(r.FormValue("model_name"))
 	if modelName == "" {
 		h.renderModelsPage(w, r, "Model name is required.", "")

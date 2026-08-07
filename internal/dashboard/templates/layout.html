@@ -72,10 +72,13 @@
         </section>
       </main>
     </div>
+    {{ template "pull-status-fragment" . }}
     <script>
       (() => {
         let activeModal = null;
         let lastTrigger = null;
+        let pendingBackendFocus = null;
+        let pendingBackendScroll = null;
 
         const focusableSelector =
           'a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), iframe, object, embed, [contenteditable], [tabindex]:not([tabindex="-1"])';
@@ -127,6 +130,105 @@
           document.body.classList.add("modal-open");
           activeModal = modal;
           focusModal(modal);
+        };
+
+        const resolveEventTarget = (event) => {
+          const detail = event.detail || {};
+          if (detail.target instanceof Element) {
+            return detail.target;
+          }
+          if (typeof detail.target === "string") {
+            return document.querySelector(detail.target);
+          }
+          return null;
+        };
+
+        const isBackendFragmentEvent = (event) => {
+          const detail = event.detail || {};
+          const target = resolveEventTarget(event);
+          const path = (detail.pathInfo && detail.pathInfo.requestPath) || "";
+          return (target && target.id === "backend-model-operations") || path === "/admin/models/backend-fragment";
+        };
+
+        const captureBackendFocus = (event) => {
+          if (!isBackendFragmentEvent(event)) {
+            return;
+          }
+          const detail = event.detail || {};
+          const requestEl = detail.elt instanceof Element ? detail.elt : null;
+          const active = document.activeElement instanceof Element ? document.activeElement : null;
+          const source = active && active.closest("#backend-model-operations") ? active : requestEl;
+          if (!source) {
+            pendingBackendFocus = null;
+            return;
+          }
+
+          pendingBackendFocus = {
+            id: source.id || "",
+            name: source.getAttribute("name") || "",
+            value: source.getAttribute("value") || "",
+            tagName: source.tagName,
+          };
+        };
+
+        const captureBackendScroll = (event) => {
+          if (!isBackendFragmentEvent(event)) {
+            return;
+          }
+          const results = document.getElementById("backend-model-results");
+          if (!results) {
+            pendingBackendScroll = null;
+            return;
+          }
+          pendingBackendScroll = {
+            scrollTop: results.scrollTop,
+            topOffset: results.getBoundingClientRect().top,
+          };
+        };
+
+        const restoreBackendFocus = (container) => {
+          if (!container || !pendingBackendFocus) {
+            pendingBackendFocus = null;
+            return;
+          }
+
+          let target = null;
+          if (pendingBackendFocus.id) {
+            const exact = document.getElementById(pendingBackendFocus.id);
+            if (exact && container.contains(exact)) {
+              target = exact;
+            }
+          }
+          if (!target && pendingBackendFocus.name === "backend_model_action" && pendingBackendFocus.value) {
+            target = container.querySelector(
+              `button[name="backend_model_action"][value="${pendingBackendFocus.value}"]`
+            );
+          }
+          if (!target && pendingBackendFocus.name) {
+            target = container.querySelector(
+              `[name="${pendingBackendFocus.name}"]`
+            );
+          }
+          if (target && typeof target.focus === "function") {
+            target.focus();
+          }
+          pendingBackendFocus = null;
+        };
+
+        const restoreBackendScroll = () => {
+          if (!pendingBackendScroll) {
+            return;
+          }
+          const results = document.getElementById("backend-model-results");
+          if (!results) {
+            pendingBackendScroll = null;
+            return;
+          }
+          const desiredWindowTop =
+            window.scrollY + results.getBoundingClientRect().top - pendingBackendScroll.topOffset;
+          window.scrollTo({ top: Math.max(0, desiredWindowTop), behavior: "auto" });
+          results.scrollTop = pendingBackendScroll.scrollTop;
+          pendingBackendScroll = null;
         };
 
         document.addEventListener("click", (event) => {
@@ -191,6 +293,8 @@
         });
 
         document.addEventListener("htmx:beforeRequest", (event) => {
+          captureBackendFocus(event);
+          captureBackendScroll(event);
           if (!document.hidden) {
             return;
           }
@@ -199,6 +303,15 @@
           if (path.startsWith("/admin/overview/partial")) {
             event.preventDefault();
           }
+        });
+
+        document.addEventListener("htmx:afterSwap", (event) => {
+          const target = resolveEventTarget(event);
+          if (!target || target.id !== "backend-model-operations") {
+            return;
+          }
+          restoreBackendScroll();
+          restoreBackendFocus(target);
         });
 
         document.addEventListener("visibilitychange", () => {
@@ -233,4 +346,45 @@
     </script>
   </body>
 </html>
+{{ end }}
+
+{{ define "pull-status-fragment" }}
+  {{ if .PullJob }}
+  <aside
+    id="pull-status-widget"
+    class="pull-status-widget{{ if .PullJob.IsError }} is-error{{ else if .PullJob.IsComplete }} is-success{{ else }} is-active{{ end }}"
+    {{ if .PullJob.ShouldPoll }}hx-get="{{ .PullStatusPath }}" hx-trigger="every 750ms" hx-swap="outerHTML"{{ end }}
+  >
+    <div class="pull-status-header">
+      <p class="eyebrow">Model Download</p>
+      <span class="pill {{ if .PullJob.IsError }}disabled{{ else if .PullJob.IsComplete }}healthy{{ else }}warning{{ end }}">
+        {{ if .PullJob.IsError }}Failed{{ else if .PullJob.IsComplete }}Complete{{ else }}Active{{ end }}
+      </span>
+    </div>
+    <h3 class="pull-status-title mono">{{ .PullJob.ModelName }}</h3>
+    <p class="hint">Backend: <span class="mono">{{ .PullJob.BackendName }}</span></p>
+    <p class="pull-status-copy">{{ .PullJob.Status }}</p>
+    <div class="pull-status-progress{{ if .PullJob.IsIndeterminate }} is-indeterminate{{ end }}">
+      <div
+        class="pull-status-progress-bar"
+        {{ if .PullJob.IsIndeterminate }}style="width: 38%"{{ else }}style="width: {{ .PullJob.Percent }}%"{{ end }}
+      ></div>
+    </div>
+    <div class="pull-status-meta">
+      {{ if gt .PullJob.Total 0 }}
+      <span>{{ .PullJob.Percent }}%</span>
+      <span class="mono">{{ .PullJob.Completed }} / {{ .PullJob.Total }}</span>
+      {{ else if .PullJob.IsActive }}
+      <span>Waiting for size details</span>
+      {{ else }}
+      <span>Finished</span>
+      {{ end }}
+    </div>
+    {{ if .PullJob.ErrorMessage }}
+    <p class="error">{{ .PullJob.ErrorMessage }}</p>
+    {{ end }}
+  </aside>
+  {{ else }}
+  <div id="pull-status-widget" hidden></div>
+  {{ end }}
 {{ end }}
