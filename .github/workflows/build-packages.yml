@@ -3,13 +3,8 @@ name: Build Packages
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
     tags:
       - "v*"
-  pull_request:
-    branches:
-      - main
 
 jobs:
   build-packages:
@@ -27,27 +22,6 @@ jobs:
         !contains(github.event.head_commit.message, 'skip workflows') &&
         !contains(github.event.head_commit.message, 'skip github actions') &&
         !contains(github.event.head_commit.message, 'skip actions')
-      ) ||
-      (
-        github.event_name == 'pull_request' &&
-        !contains(github.event.pull_request.title, '[skip ci]') &&
-        !contains(github.event.pull_request.title, '[ci skip]') &&
-        !contains(github.event.pull_request.title, 'skip ci') &&
-        !contains(github.event.pull_request.title, 'ci skip') &&
-        !contains(github.event.pull_request.title, 'no-ci') &&
-        !contains(github.event.pull_request.title, 'skip-ci') &&
-        !contains(github.event.pull_request.title, 'skip workflows') &&
-        !contains(github.event.pull_request.title, 'skip github actions') &&
-        !contains(github.event.pull_request.title, 'skip actions') &&
-        !contains(github.event.pull_request.body, '[skip ci]') &&
-        !contains(github.event.pull_request.body, '[ci skip]') &&
-        !contains(github.event.pull_request.body, 'skip ci') &&
-        !contains(github.event.pull_request.body, 'ci skip') &&
-        !contains(github.event.pull_request.body, 'no-ci') &&
-        !contains(github.event.pull_request.body, 'skip-ci') &&
-        !contains(github.event.pull_request.body, 'skip workflows') &&
-        !contains(github.event.pull_request.body, 'skip github actions') &&
-        !contains(github.event.pull_request.body, 'skip actions')
       )
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -105,6 +79,7 @@ jobs:
         run: ./packaging/scripts/build-packages.ps1
 
       - name: Upload workflow artifacts
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: ollama-gateway-packages-${{ matrix.os }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
