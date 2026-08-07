@@ -332,13 +332,15 @@ body.modal-open {
 
 input,
 button,
-label {
+label,
+select {
 	font: inherit;
 }
 
 input[type="text"],
 input[type="password"],
-input[type="datetime-local"] {
+input[type="datetime-local"],
+select:not(.theme-select) {
 	width: 100%;
 	background: #ffffff;
 	border: 1px solid #dbc7ae;
@@ -349,7 +351,8 @@ input[type="datetime-local"] {
 
 input[type="text"]:focus,
 input[type="password"]:focus,
-input[type="datetime-local"]:focus {
+input[type="datetime-local"]:focus,
+select:not(.theme-select):focus {
 	outline: 2px solid rgba(190, 79, 46, 0.18);
 	border-color: var(--accent);
 }
@@ -705,6 +708,89 @@ button:hover {
 	width: 100%;
 }
 
+.pull-status-widget {
+	position: fixed;
+	top: 24px;
+	right: 24px;
+	width: min(360px, calc(100vw - 32px));
+	padding: 16px;
+	border-radius: 16px;
+	border: 1px solid var(--line);
+	background: rgba(255, 250, 243, 0.95);
+	backdrop-filter: blur(10px);
+	box-shadow: 0 18px 40px rgba(85, 43, 16, 0.2);
+	z-index: 900;
+	animation: rise-in 0.24s ease;
+}
+
+.pull-status-widget.is-active {
+	border-color: #edd0ac;
+}
+
+.pull-status-widget.is-success {
+	border-color: #bfe0c9;
+	background: rgba(243, 251, 246, 0.96);
+}
+
+.pull-status-widget.is-error {
+	border-color: #f0c1b6;
+	background: rgba(255, 245, 242, 0.96);
+}
+
+.pull-status-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.pull-status-header .eyebrow {
+	margin: 0;
+}
+
+.pull-status-title {
+	margin: 0 0 6px;
+	font-size: 1rem;
+	color: var(--ink);
+}
+
+.pull-status-copy {
+	margin: 10px 0 12px;
+	font-weight: 600;
+	color: #243746;
+}
+
+.pull-status-progress {
+	height: 10px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: #f1dfca;
+	position: relative;
+}
+
+.pull-status-progress-bar {
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(140deg, var(--accent), #f28c59);
+	transition: width 0.3s ease;
+}
+
+.pull-status-progress.is-indeterminate .pull-status-progress-bar {
+	position: absolute;
+	left: -38%;
+	animation: progress-shift 1.2s ease-in-out infinite;
+}
+
+.pull-status-meta {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 10px;
+	font-size: 0.88rem;
+	color: var(--muted);
+}
+
 .eyebrow {
 	font-family: "IBM Plex Mono", "Courier New", monospace;
 	letter-spacing: 0.08em;
@@ -721,6 +807,18 @@ button:hover {
 	to {
 		opacity: 1;
 		transform: translateY(0);
+	}
+}
+
+@keyframes progress-shift {
+	0% {
+		left: -38%;
+	}
+	50% {
+		left: 32%;
+	}
+	100% {
+		left: 100%;
 	}
 }
 
@@ -801,5 +899,12 @@ button:hover {
 
 	.crud-actions {
 		justify-content: flex-start;
+	}
+
+	.pull-status-widget {
+		top: 12px;
+		right: 12px;
+		left: 12px;
+		width: auto;
 	}
 }

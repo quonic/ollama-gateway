@@ -1,4 +1,222 @@
-{{ define "content-models" }}
+{{ define "content-model-backend-fragment" }}
+<div id="backend-model-operations" class="card">
+  <h3>Backend Model Operations</h3>
+  <p class="hint">
+    Pull or remove models directly on a configured backend. These actions affect
+    backend state only; they do not change the gateway catalog unless you edit
+    the model routing entries separately.
+  </p>
+  <form method="post" action="/admin/models" class="inline-form">
+    <input type="hidden" name="action" value="backend-model" />
+    <input type="hidden" name="backend_model_action" value="refresh" />
+    <label for="backend_model_backend">Backend</label>
+    <select
+      id="backend_model_backend"
+      name="backend_model_backend"
+      hx-get="/admin/models/backend-fragment"
+      hx-target="#backend-model-operations"
+      hx-swap="outerHTML"
+      hx-include="closest form"
+      hx-trigger="change"
+    >
+      {{ range $backend := .Backends }}
+      <option
+        value="{{ $backend.Name }}"
+        {{
+        if
+        and
+        $.BackendModelState
+        (eq
+        $.BackendModelState.BackendName
+        $backend.Name)
+        }}selected{{
+        end
+        }}
+      >
+        {{ $backend.Name }}
+      </option>
+      {{ end }}
+    </select>
+
+    <label for="backend_model_name">Model name</label>
+    <select id="backend_model_name" name="backend_model_name">
+      {{ if .BackendModelState }} {{ if .BackendModelState.Available }} {{ range
+      $model := .BackendModelState.Available }}
+      <option
+        value="{{ $model.Name }}"
+        {{
+        if
+        eq
+        $.BackendModelState.ModelName
+        $model.Name
+        }}selected{{
+        end
+        }}
+      >
+        {{ $model.Name }}
+      </option>
+      {{ end }} {{ else }}
+      <option value="">No models found on selected backend</option>
+      {{ end }} {{ else }}
+      <option value="">Select a backend first</option>
+      {{ end }}
+    </select>
+
+    <div class="modal-actions">
+      <button
+        type="submit"
+        name="backend_model_action"
+        value="refresh"
+        hx-get="/admin/models/backend-fragment"
+        hx-target="#backend-model-operations"
+        hx-swap="outerHTML"
+        hx-include="closest form"
+      >
+        Refresh
+      </button>
+      <button
+        type="button"
+        name="backend_model_action"
+        value="pull"
+        class="js-open-modal"
+        data-modal-target="pull-model-modal"
+      >
+        Pull
+      </button>
+      <button
+        type="submit"
+        name="backend_model_action"
+        value="inspect"
+        hx-get="/admin/models/backend-fragment"
+        hx-target="#backend-model-operations"
+        hx-swap="outerHTML"
+        hx-include="closest form"
+      >
+        Inspect
+      </button>
+      <button
+        type="submit"
+        name="backend_model_action"
+        value="delete"
+        class="button-danger"
+        hx-post="/admin/models/backend-fragment"
+        hx-target="#backend-model-operations"
+        hx-swap="outerHTML"
+        hx-include="closest form"
+      >
+        Delete
+      </button>
+      <button
+        type="submit"
+        name="backend_model_action"
+        value="eject"
+        class="button-secondary"
+        hx-post="/admin/models/backend-fragment"
+        hx-target="#backend-model-operations"
+        hx-swap="outerHTML"
+        hx-include="closest form"
+      >
+        Eject
+      </button>
+    </div>
+  </form>
+  <p class="hint">
+    Pull opens a download modal so you can enter any model name and track the
+    live download from the floating status card.
+  </p>
+
+  {{ if .BackendModelState }}
+  <div
+    id="backend-model-results"
+    style="
+      margin-top: 16px;
+      padding: 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+    "
+  >
+    {{ if .BackendModelState.FormError }}
+    <p class="hint" style="color: #b91c1c">
+      <strong>{{ .BackendModelState.FormError }}</strong>
+    </p>
+    {{ end }} {{ if .BackendModelState.FormSuccess }}
+    <p class="hint" style="color: #166534">
+      <strong>{{ .BackendModelState.FormSuccess }}</strong>
+    </p>
+    {{ end }} {{ if .BackendModelState.InMemory }}
+    <h4 style="margin-top: 12px">Loaded in Memory</h4>
+    <ul>
+      {{ range $model := .BackendModelState.InMemory }}
+      <li><span class="mono">{{ $model.Name }}</span></li>
+      {{ end }}
+    </ul>
+    {{ end }} {{ if .BackendModelState.Details }}
+    <h4 style="margin-top: 12px">Model Details</h4>
+    {{ if .BackendModelState.ParsedDetails }}
+    <h5 style="margin-top: 10px; margin-bottom: 6px">Capabilities</h5>
+    {{ if .BackendModelState.ParsedDetails.Capabilities }}
+    <ul>
+      {{ range $capability := .BackendModelState.ParsedDetails.Capabilities }}
+      <li><span class="mono">{{ $capability }}</span></li>
+      {{ end }}
+    </ul>
+    {{ else }}
+    <p class="hint">No capabilities reported by backend.</p>
+    {{ end }}
+
+    <h5 style="margin-top: 10px; margin-bottom: 6px">Details</h5>
+    <ul>
+      {{ if .BackendModelState.ParsedDetails.Details.Family }}
+      <li>
+        <strong>Family:</strong>
+        <span class="mono"
+          >{{ .BackendModelState.ParsedDetails.Details.Family }}</span
+        >
+      </li>
+      {{ end }} {{ if .BackendModelState.ParsedDetails.Details.Families }}
+      <li>
+        <strong>Families:</strong>
+        {{ range $i, $family :=
+        .BackendModelState.ParsedDetails.Details.Families }} {{ if $i }}, {{ end
+        }}<span class="mono">{{ $family }}</span>{{ end }}
+      </li>
+      {{ end }} {{ if .BackendModelState.ParsedDetails.Details.Format }}
+      <li>
+        <strong>Format:</strong>
+        <span class="mono"
+          >{{ .BackendModelState.ParsedDetails.Details.Format }}</span
+        >
+      </li>
+      {{ end }} {{ if .BackendModelState.ParsedDetails.Details.ParameterSize }}
+      <li>
+        <strong>Parameter Size:</strong>
+        <span class="mono"
+          >{{ .BackendModelState.ParsedDetails.Details.ParameterSize }}</span
+        >
+      </li>
+      {{ end }} {{ if .BackendModelState.ParsedDetails.Details.QuantizationLevel
+      }}
+      <li>
+        <strong>Quantization:</strong>
+        <span class="mono"
+          >{{ .BackendModelState.ParsedDetails.Details.QuantizationLevel
+          }}</span
+        >
+      </li>
+      {{ end }} {{ if .BackendModelState.ParsedDetails.Details.ParentModel }}
+      <li>
+        <strong>Parent Model:</strong>
+        <span class="mono"
+          >{{ .BackendModelState.ParsedDetails.Details.ParentModel }}</span
+        >
+      </li>
+      {{ end }}
+    </ul>
+    {{ end }} {{ end }}
+  </div>
+  {{ end }}
+</div>
+{{ end }} {{ define "content-models" }}
 <div class="card">
   <h3>Model Catalog</h3>
   <p>
@@ -25,6 +243,64 @@
     >
       Create Model
     </button>
+  </div>
+</div>
+
+{{ template "content-model-backend-fragment" . }}
+
+<div id="pull-model-modal" class="modal-backdrop" hidden>
+  <div
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="pull-model-title"
+  >
+    <div class="modal-header">
+      <div>
+        <h4 id="pull-model-title">Download Model</h4>
+        <p class="hint">
+          Enter a model name to pull it directly onto the selected backend.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="modal-close js-close-modal"
+        aria-label="Close"
+      >
+        &times;
+      </button>
+    </div>
+    <div class="modal-body">
+      <form method="post" action="/admin/models/pull" class="inline-form">
+        <label for="pull_model_backend">Backend</label>
+        <select id="pull_model_backend" name="backend_model_backend">
+          {{ range $backend := .Backends }}
+          <option value="{{ $backend.Name }}">{{ $backend.Name }}</option>
+          {{ end }}
+        </select>
+
+        <label for="pull_model_name">Model name</label>
+        <input
+          id="pull_model_name"
+          name="pull_model_name"
+          type="text"
+          placeholder="llama3.2"
+          required
+        />
+
+        <p class="hint" style="margin-top: 10px">
+          Progress appears in the floating status card at the top right and
+          stays visible across admin pages.
+        </p>
+
+        <div class="modal-actions">
+          <button type="button" class="button-secondary js-close-modal">
+            Cancel
+          </button>
+          <button type="submit">Download</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 
