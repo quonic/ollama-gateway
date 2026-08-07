@@ -1098,6 +1098,335 @@ func TestModelCreateWorkflow(t *testing.T) {
 	}
 }
 
+func TestModelsPagePreloadsSelectedBackendModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"},{"name":"qwen2.5"}]}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "ama", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "ama"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/models", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected models page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `value="ama"`) || !strings.Contains(body, `selected`) {
+		t.Fatalf("expected selected backend in response, got %q", body)
+	}
+	if !strings.Contains(body, `value="llama3.2"`) || !strings.Contains(body, `value="qwen2.5"`) {
+		t.Fatalf("expected backend model options in response, got %q", body)
+	}
+	if !strings.Contains(body, `hx-get="/admin/models/backend-fragment"`) {
+		t.Fatalf("expected HTMX backend refresh hook, got %q", body)
+	}
+	if !strings.Contains(body, `hx-target="#backend-model-operations"`) {
+		t.Fatalf("expected backend fragment target hook, got %q", body)
+	}
+}
+
+func TestModelsPageIncludesBackendFocusRestoreScript(t *testing.T) {
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: "http://127.0.0.1:11434"}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/models", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected models page, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, "pendingBackendFocus") {
+		t.Fatalf("expected backend focus restore state in script, got %q", body)
+	}
+	if !strings.Contains(body, "pendingBackendScroll") {
+		t.Fatalf("expected backend scroll restore state in script, got %q", body)
+	}
+	if !strings.Contains(body, "htmx:afterSwap") {
+		t.Fatalf("expected htmx afterSwap focus restore hook, got %q", body)
+	}
+	if !strings.Contains(body, "backend-model-operations") {
+		t.Fatalf("expected backend operations target in focus restore script, got %q", body)
+	}
+	if !strings.Contains(body, "backend-model-results") {
+		t.Fatalf("expected backend results container in scroll restore script, got %q", body)
+	}
+}
+
+func TestModelsBackendFragmentRendersWithoutLayout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		case "/api/ps":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "ama", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "ama"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/models/backend-fragment?backend_model_backend=ama", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected backend fragment response, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `id="backend-model-operations"`) {
+		t.Fatalf("expected backend fragment wrapper, got %q", body)
+	}
+	if !strings.Contains(body, `value="llama3.2"`) || !strings.Contains(body, `Loaded in Memory`) {
+		t.Fatalf("expected refreshed backend data in fragment, got %q", body)
+	}
+	if strings.Contains(body, "<!doctype html>") || strings.Contains(body, "Control panel") {
+		t.Fatalf("expected fragment-only response without layout shell, got %q", body)
+	}
+}
+
+func TestModelsBackendFragmentInspectRendersDetailsInline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		case "/api/ps":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		case "/api/show":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"model":"llama3.2","capabilities":["completion","vision"],"details":{"parent_model":"","format":"gguf","family":"llama","families":["llama"],"parameter_size":"8.0B","quantization_level":"Q4_K_M"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "ama", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "ama"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/models/backend-fragment?backend_model_backend=ama&backend_model_name=llama3.2&backend_model_action=refresh&backend_model_action=inspect", nil)
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected inspect fragment response, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `Model Details`) {
+		t.Fatalf("expected inline model details section, got %q", body)
+	}
+	if !strings.Contains(body, `Capabilities`) || !strings.Contains(body, `completion`) || !strings.Contains(body, `vision`) {
+		t.Fatalf("expected capabilities in inspected model output, got %q", body)
+	}
+	if !strings.Contains(body, `Parameter Size`) || !strings.Contains(body, `8.0B`) {
+		t.Fatalf("expected parsed detail fields in output, got %q", body)
+	}
+	if !strings.Contains(body, `Family:`) || !strings.Contains(body, `llama`) {
+		t.Fatalf("expected family detail in output, got %q", body)
+	}
+	if strings.Contains(body, `Raw JSON`) {
+		t.Fatalf("expected raw json section to be removed, got %q", body)
+	}
+	if strings.Contains(body, "<!doctype html>") || strings.Contains(body, "Control panel") {
+		t.Fatalf("expected fragment-only inspect response without layout shell, got %q", body)
+	}
+}
+
+func TestModelsBackendFragmentDeleteRendersInline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		case "/api/ps":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		case "/api/delete":
+			if r.Method != http.MethodDelete {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"success"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "ama", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "ama"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("backend_model_backend", "ama")
+	form.Set("backend_model_name", "llama3.2")
+	form.Add("backend_model_action", "refresh")
+	form.Add("backend_model_action", "delete")
+	req := httptest.NewRequest(http.MethodPost, "/admin/models/backend-fragment", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected delete fragment response, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `deletion requested`) {
+		t.Fatalf("expected inline delete success message, got %q", body)
+	}
+	if strings.Contains(body, "<!doctype html>") || strings.Contains(body, "Control panel") {
+		t.Fatalf("expected fragment-only delete response without layout shell, got %q", body)
+	}
+}
+
+func TestModelsBackendFragmentEjectRendersInline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		case "/api/ps":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		case "/api/generate":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"response":"done"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "ama", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "ama"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("backend_model_backend", "ama")
+	form.Set("backend_model_name", "llama3.2")
+	form.Add("backend_model_action", "refresh")
+	form.Add("backend_model_action", "eject")
+	req := httptest.NewRequest(http.MethodPost, "/admin/models/backend-fragment", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Admin-Token", "super-secret")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected eject fragment response, got %d", resp.Code)
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `eject requested`) {
+		t.Fatalf("expected inline eject success message, got %q", body)
+	}
+	if strings.Contains(body, "<!doctype html>") || strings.Contains(body, "Control panel") {
+		t.Fatalf("expected fragment-only eject response without layout shell, got %q", body)
+	}
+}
+
 func TestModelUpdateAndDeleteWorkflow(t *testing.T) {
 	cfg := &config.Config{
 		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
@@ -1666,4 +1995,170 @@ func TestServeStaticThemeFileHasCSSContentType(t *testing.T) {
 	if !strings.Contains(resp.Body.String(), ":root") {
 		t.Fatalf("expected css file content, got %q", resp.Body.String())
 	}
+}
+
+func TestPullModelStartAndStatusFragment(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pull" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte("{\"status\":\"downloading\",\"total\":100,\"completed\":25}\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		started <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte("{\"status\":\"success\",\"total\":100,\"completed\":100}\n"))
+	}))
+	defer server.Close()
+	defer close(release)
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("backend_model_backend", "local")
+	form.Set("pull_model_name", "llama3.2")
+	startReq := httptest.NewRequest(http.MethodPost, "/admin/models/pull", strings.NewReader(form.Encode()))
+	startReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	startReq.Header.Set("X-Admin-Token", "super-secret")
+	startResp := httptest.NewRecorder()
+	handler.ServeHTTP(startResp, startReq)
+
+	if startResp.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after starting pull, got %d", startResp.Code)
+	}
+	if got := startResp.Header().Get("Location"); got != "/admin/models" {
+		t.Fatalf("expected redirect to models page, got %q", got)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for pull to start")
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/admin/pull-status", nil)
+	statusReq.Header.Set("X-Admin-Token", "super-secret")
+	body := ""
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		statusResp := httptest.NewRecorder()
+		handler.ServeHTTP(statusResp, statusReq)
+		if statusResp.Code != http.StatusOK {
+			t.Fatalf("expected status fragment, got %d", statusResp.Code)
+		}
+		body = statusResp.Body.String()
+		if strings.Contains(body, "25%") {
+			break
+		}
+	}
+	if !strings.Contains(body, "pull-status-widget") {
+		t.Fatalf("expected pull status widget, got %q", body)
+	}
+	if !strings.Contains(body, "llama3.2") || !strings.Contains(body, "25%") {
+		t.Fatalf("expected active pull details in fragment, got %q", body)
+	}
+	if !strings.Contains(body, "hx-get=\"/admin/pull-status\"") {
+		t.Fatalf("expected polling hook in fragment, got %q", body)
+	}
+
+	overviewReq := httptest.NewRequest(http.MethodGet, "/admin/overview", nil)
+	overviewReq.Header.Set("X-Admin-Token", "super-secret")
+	overviewResp := httptest.NewRecorder()
+	handler.ServeHTTP(overviewResp, overviewReq)
+
+	if overviewResp.Code != http.StatusOK {
+		t.Fatalf("expected overview page, got %d", overviewResp.Code)
+	}
+	if !strings.Contains(overviewResp.Body.String(), "pull-status-widget") {
+		t.Fatalf("expected global pull status widget on overview page, got %q", overviewResp.Body.String())
+	}
+
+	release <- struct{}{}
+}
+
+func TestPullModelStartRejectsConcurrentDownloads(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/pull" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte("{\"status\":\"downloading\"}\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		started <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte("{\"status\":\"success\"}\n"))
+	}))
+	defer server.Close()
+	defer close(release)
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "local", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "local"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("backend_model_backend", "local")
+	form.Set("pull_model_name", "llama3.2")
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/admin/models/pull", strings.NewReader(form.Encode()))
+	firstReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	firstReq.Header.Set("X-Admin-Token", "super-secret")
+	firstResp := httptest.NewRecorder()
+	handler.ServeHTTP(firstResp, firstReq)
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first pull to start")
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/admin/models/pull", strings.NewReader(form.Encode()))
+	secondReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	secondReq.Header.Set("X-Admin-Token", "super-secret")
+	secondResp := httptest.NewRecorder()
+	handler.ServeHTTP(secondResp, secondReq)
+
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("expected models page with error, got %d", secondResp.Code)
+	}
+	if !strings.Contains(secondResp.Body.String(), "already active") {
+		t.Fatalf("expected concurrent pull rejection message, got %q", secondResp.Body.String())
+	}
+
+	release <- struct{}{}
 }
