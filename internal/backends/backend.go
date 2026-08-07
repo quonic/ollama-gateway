@@ -126,7 +126,7 @@ func (b *Backend) PullModelStream(ctx context.Context, modelName string, onProgr
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: b.Timeout}
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("call POST /api/pull: %w", err)

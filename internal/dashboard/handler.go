@@ -440,6 +440,11 @@ func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) renderModelsBackendFragment(w http.ResponseWriter, r *http.Request) {
+	if !h.isAuthenticated(r) {
+		h.httpError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
 	values, err := backendModelRequestValues(r)
 	if err != nil {
 		h.httpError(w, http.StatusBadRequest, "invalid form")
