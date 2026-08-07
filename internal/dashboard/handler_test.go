@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1189,6 +1190,81 @@ func TestModelsPageIncludesBackendFocusRestoreScript(t *testing.T) {
 	if !strings.Contains(body, "backend-model-results") {
 		t.Fatalf("expected backend results container in scroll restore script, got %q", body)
 	}
+}
+
+func TestModelsBackendStateConcurrentRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"},{"name":"qwen2.5"}]}`))
+		case "/api/ps":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"models":[{"name":"llama3.2"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Admin:    config.AdminConfig{TokenHash: auth.HashAPIKey("super-secret")},
+		Backends: []config.Backend{{Name: "ama", URL: server.URL}},
+		Models: config.ModelCatalog{Models: map[string]config.ModelEntry{
+			"llama3.2": {Name: "llama3.2", Backends: []config.ModelBackendRef{{Backend: "ama"}}},
+		}},
+		Users: map[string]config.UserConfig{
+			"demo": {APIKeyHash: auth.HashAPIKey("demo-key")},
+		},
+	}
+	authStore := auth.NewStore(cfg, nil)
+	handler, err := NewHandler(cfg, authStore, nil, nil)
+	if err != nil {
+		t.Fatalf("new handler: %v", err)
+	}
+
+	const workers = 8
+	const iterations = 30
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+
+			for j := 0; j < iterations; j++ {
+				if (i+j)%2 == 0 {
+					req := httptest.NewRequest(http.MethodGet, "/admin/models", nil)
+					req.Header.Set("X-Admin-Token", "super-secret")
+					resp := httptest.NewRecorder()
+					handler.ServeHTTP(resp, req)
+					if resp.Code != http.StatusOK {
+						t.Errorf("models page status = %d", resp.Code)
+					}
+					continue
+				}
+
+				form := url.Values{}
+				form.Set("backend_model_backend", "ama")
+				form.Set("backend_model_name", "llama3.2")
+				form.Add("backend_model_action", "refresh")
+				req := httptest.NewRequest(http.MethodPost, "/admin/models/backend-fragment", strings.NewReader(form.Encode()))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				req.Header.Set("X-Admin-Token", "super-secret")
+				resp := httptest.NewRecorder()
+				handler.ServeHTTP(resp, req)
+				if resp.Code != http.StatusOK {
+					t.Errorf("backend fragment status = %d", resp.Code)
+				}
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
 }
 
 func TestModelsBackendFragmentRendersWithoutLayout(t *testing.T) {

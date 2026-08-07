@@ -42,6 +42,7 @@ type Handler struct {
 	backendStore *backends.Store
 
 	reloadStatusProvider func() config.ReloadStatus
+	backendModelStateMu  sync.RWMutex
 	backendModelState    *backendModelState
 	pullJobMu            sync.Mutex
 	pullJob              *pullJobState
@@ -439,6 +440,19 @@ func (h *Handler) renderModels(w http.ResponseWriter, r *http.Request) {
 	h.renderModelsPage(w, r, "", "")
 }
 
+func (h *Handler) getBackendModelState() *backendModelState {
+	h.backendModelStateMu.RLock()
+	state := h.backendModelState
+	h.backendModelStateMu.RUnlock()
+	return state
+}
+
+func (h *Handler) setBackendModelState(state *backendModelState) {
+	h.backendModelStateMu.Lock()
+	h.backendModelState = state
+	h.backendModelStateMu.Unlock()
+}
+
 func (h *Handler) renderModelsBackendFragment(w http.ResponseWriter, r *http.Request) {
 	if !h.isAuthenticated(r) {
 		h.httpError(w, http.StatusForbidden, "forbidden")
@@ -475,7 +489,7 @@ func (h *Handler) renderModelsBackendFragment(w http.ResponseWriter, r *http.Req
 		}
 	}
 	if state != nil {
-		h.backendModelState = state
+		h.setBackendModelState(state)
 	}
 
 	data := map[string]any{
@@ -503,11 +517,11 @@ func backendModelRequestValues(r *http.Request) (url.Values, error) {
 }
 
 func (h *Handler) renderModelsPage(w http.ResponseWriter, r *http.Request, formError, formSuccess string) {
-	backendState := h.backendModelState
+	backendState := h.getBackendModelState()
 	if backendState == nil {
 		backendState = h.defaultBackendModelState()
 		if backendState != nil {
-			h.backendModelState = backendState
+			h.setBackendModelState(backendState)
 		}
 	}
 
@@ -1677,23 +1691,23 @@ func (h *Handler) handleModelAction(w http.ResponseWriter, r *http.Request) {
 		backendName := strings.TrimSpace(r.FormValue("backend_model_backend"))
 		modelName := strings.TrimSpace(r.FormValue("backend_model_name"))
 		if backendName == "" {
-			h.backendModelState = &backendModelState{FormError: "Backend is required for backend model operations."}
+			h.setBackendModelState(&backendModelState{FormError: "Backend is required for backend model operations."})
 			h.renderModelsPage(w, r, "Backend is required for backend model operations.", "")
 			return
 		}
 		if modelName == "" && backendAction != "refresh" {
-			h.backendModelState = &backendModelState{FormError: "Model name is required for that operation."}
+			h.setBackendModelState(&backendModelState{FormError: "Model name is required for that operation."})
 			h.renderModelsPage(w, r, "Model name is required for that operation.", "")
 			return
 		}
 		state, err := h.executeBackendModelAction(r.Context(), backendAction, backendName, modelName)
 		if err != nil {
 			state.FormError = fmt.Sprintf("Backend operation failed: %v", err)
-			h.backendModelState = state
+			h.setBackendModelState(state)
 			h.renderModelsPage(w, r, state.FormError, "")
 			return
 		}
-		h.backendModelState = state
+		h.setBackendModelState(state)
 		h.renderModelsPage(w, r, "", state.FormSuccess)
 		return
 	}
